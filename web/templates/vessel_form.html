@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{if .Vessel}}Editar Navio{{else}}Novo Navio{{end}} — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; }
+    .container { max-width: 640px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.3rem; color: #1a202c; margin-bottom: 1.5rem; }
+    .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1.75rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .full { grid-column: 1 / -1; }
+    label { display: block; font-size: 0.8rem; font-weight: 700; color: #4a5568; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .hint { font-size: 0.75rem; color: #718096; font-weight: 400; margin-left: 0.5rem; text-transform: none; letter-spacing: 0; }
+    input, select { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 0.9rem; outline: none; transition: border-color 0.15s; }
+    input:focus, select:focus { border-color: #3182ce; }
+    input[readonly] { background: #f7fafc; color: #718096; cursor: not-allowed; }
+    .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; border-radius: 5px; padding: 0.6rem 0.75rem; font-size: 0.875rem; margin-bottom: 1rem; }
+    .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
+    .btn { padding: 0.5rem 1.25rem; border-radius: 5px; font-size: 0.9rem; font-weight: 600; cursor: pointer; text-decoration: none; border: none; }
+    .btn-primary { background: #2b6cb0; color: white; }
+    .btn-primary:hover { background: #2c5282; }
+    .btn-secondary { background: #edf2f7; color: #4a5568; }
+    .btn-secondary:hover { background: #e2e8f0; }
+    .ciala-note { background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 5px; padding: 0.65rem 0.85rem; font-size: 0.8rem; color: #2c5282; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <h1>{{if .Vessel}}Editar: {{.Vessel.Name}}{{else}}Cadastrar Novo Navio{{end}}</h1>
+
+  {{if .Error}}
+  <div class="error">{{.Error}}</div>
+  {{end}}
+
+  {{/* Se .Vessel existir → formulário de edição (POST para /vessels/:id) */}}
+  {{/* Se .Vessel for nil  → formulário de criação (POST para /vessels)    */}}
+  <form method="POST" action="{{if .Vessel}}/vessels/{{.Vessel.ID}}{{else}}/vessels{{end}}">
+    <div class="card">
+      <div class="grid">
+
+        <div class="full">
+          <label>IMO <span class="hint">identificador único mundial do navio</span></label>
+          <input type="text" name="imo" placeholder="IMO1234567"
+            value="{{if .Vessel}}{{.Vessel.IMO}}{{end}}"
+            {{if .Vessel}}readonly{{end}}
+            required>
+          {{/* IMO é imutável — não pode ser editado após criação */}}
+        </div>
+
+        <div class="full">
+          <label>Nome do Navio <span class="hint">como aparece no ZP-21</span></label>
+          <input type="text" name="name" placeholder="MSC MARINA"
+            value="{{if .Vessel}}{{.Vessel.Name}}{{end}}" required>
+        </div>
+
+        <div>
+          <label>Bandeira</label>
+          <input type="text" name="flag" placeholder="Panama"
+            value="{{if .Vessel}}{{.Vessel.Flag}}{{end}}">
+        </div>
+
+        <div>
+          <label>Ano de Construção</label>
+          <input type="number" name="year_built" placeholder="2010" min="1900" max="2100"
+            value="{{if .Vessel}}{{.Vessel.YearBuilt}}{{end}}">
+        </div>
+
+        <div>
+          <label>Tipo</label>
+          <select name="vessel_type">
+            <option value="">— selecione —</option>
+            {{$vt := ""}}{{if .Vessel}}{{$vt = .Vessel.VesselType}}{{end}}
+            <option value="Bulk Carrier"       {{if eq $vt "Bulk Carrier"}}selected{{end}}>Bulk Carrier</option>
+            <option value="Container"          {{if eq $vt "Container"}}selected{{end}}>Container</option>
+            <option value="General Cargo"      {{if eq $vt "General Cargo"}}selected{{end}}>General Cargo</option>
+            <option value="Tanker"             {{if eq $vt "Tanker"}}selected{{end}}>Tanker</option>
+            <option value="Chemical Tanker"    {{if eq $vt "Chemical Tanker"}}selected{{end}}>Chemical Tanker</option>
+            <option value="Ro-Ro"              {{if eq $vt "Ro-Ro"}}selected{{end}}>Ro-Ro</option>
+            <option value="Passenger"          {{if eq $vt "Passenger"}}selected{{end}}>Passenger</option>
+            <option value="Offshore"           {{if eq $vt "Offshore"}}selected{{end}}>Offshore</option>
+          </select>
+        </div>
+
+        <div></div>
+
+        <div>
+          <label>Comprimento (m)</label>
+          <input type="number" name="length_m" placeholder="299.5" step="0.1" min="0"
+            value="{{if .Vessel}}{{.Vessel.LengthM}}{{end}}">
+        </div>
+
+        <div>
+          <label>Boca (m) <span class="hint">largura máxima</span></label>
+          <input type="number" name="beam_m" placeholder="48.2" step="0.1" min="0"
+            value="{{if .Vessel}}{{.Vessel.BeamM}}{{end}}">
+        </div>
+
+      </div>
+
+      <div class="ciala-note">
+        ⚓ <strong>Risco e última inspeção</strong> são obtidos automaticamente via CIALA
+        após o IMO ser registrado. Não é necessário preencher aqui.
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">
+          {{if .Vessel}}Salvar Alterações{{else}}Cadastrar Navio{{end}}
+        </button>
+        <a href="/vessels" class="btn btn-secondary">Cancelar</a>
+      </div>
+    </div>
+  </form>
+</div>
+</body>
+</html>

@@ -8,6 +8,8 @@ import (
 	"github.com/marcusteixeirabr/psc-gvi/internal/auth"
 	"github.com/marcusteixeirabr/psc-gvi/internal/config"
 	"github.com/marcusteixeirabr/psc-gvi/internal/db"
+	dbsqlc "github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
+	"github.com/marcusteixeirabr/psc-gvi/internal/vessel"
 )
 
 func main() {
@@ -25,17 +27,21 @@ func main() {
 	defer pool.Close()
 	log.Println("Conectado ao PostgreSQL com sucesso.")
 
-	// ── 3. Sessões ─────────────────────────────────────────────────────────
+	// ── 3. Queries (sqlc) ──────────────────────────────────────────────────
+	// dbsqlc.New() recebe o pool e retorna *Queries — o objeto com todos os
+	// métodos de banco gerados pelo sqlc. Passamos este objeto para os handlers.
+	queries := dbsqlc.New(pool)
+
+	// ── 4. Sessões ─────────────────────────────────────────────────────────
 	// InitStore configura o cookie store com a chave secreta.
 	// Deve ser chamado antes de qualquer handler que use sessão.
 	auth.InitStore(cfg.SessionSecret)
 
-	// ── 4. Roteador ────────────────────────────────────────────────────────
+	// ── 5. Roteador ────────────────────────────────────────────────────────
 	router := gin.Default()
 
-	// Carrega todos os arquivos .html de web/templates/ para memória.
-	// O Gin compila os templates uma vez na inicialização — eficiente.
-	// O path é relativo ao diretório de execução (raiz do projeto).
+	// LoadHTMLGlob carrega todos os .html do diretório de templates.
+	// O nome do template é o basename do arquivo (ex: "vessel_list.html").
 	router.LoadHTMLGlob("web/templates/*.html")
 
 	// ── Rotas públicas (sem autenticação) ──────────────────────────────────
@@ -49,23 +55,41 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// ── Rotas protegidas (exigem autenticação) ─────────────────────────────
-	// router.Group cria um grupo de rotas que compartilham middlewares.
-	// Todas as rotas dentro de "protected" passarão por auth.RequireAuth primeiro.
+	// ── Handlers ───────────────────────────────────────────────────────────
+	vesselHandler := vessel.NewHandler(queries)
+
+	// ── Rotas protegidas ───────────────────────────────────────────────────
 	protected := router.Group("/")
 	protected.Use(auth.RequireAuth)
 	{
 		protected.GET("/", func(c *gin.Context) {
 			user := auth.GetUser(c)
-			c.JSON(http.StatusOK, gin.H{
-				"message":      "Dashboard em construção",
-				"user":         user.DisplayName,
-				"role":         user.Role,
-			})
+			c.JSON(http.StatusOK, gin.H{"message": "Dashboard em construção", "user": user.DisplayName})
 		})
+
+		// Vessels — leitura (todos os usuários autenticados)
+		protected.GET("/vessels", vesselHandler.List)
+		protected.GET("/vessels/:id", vesselHandler.Detail)
+
+		// Vessels — escrita (editor e admin)
+		editors := protected.Group("/")
+		editors.Use(auth.RequireRole("admin", "editor"))
+		{
+			editors.GET("/vessels/new", vesselHandler.NewForm)
+			editors.POST("/vessels", vesselHandler.Create)
+			editors.GET("/vessels/:id/edit", vesselHandler.EditForm)
+			editors.POST("/vessels/:id", vesselHandler.Update)
+		}
+
+		// Vessels — desativação (admin apenas)
+		admins := protected.Group("/")
+		admins.Use(auth.RequireRole("admin"))
+		{
+			admins.POST("/vessels/:id/deactivate", vesselHandler.Deactivate)
+		}
 	}
 
-	// ── 5. Servidor HTTP ────────────────────────────────────────────────────
+	// ── 6. Servidor HTTP ────────────────────────────────────────────────────
 	addr := ":" + cfg.Port
 	log.Printf("Servidor iniciado em http://localhost%s (env: %s)\n", addr, cfg.Env)
 

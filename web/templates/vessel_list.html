@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navios — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.4rem; color: #1a202c; margin-bottom: 1rem; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .btn { padding: 0.45rem 1rem; border-radius: 5px; font-size: 0.875rem; font-weight: 600; cursor: pointer; text-decoration: none; border: none; }
+    .btn-primary { background: #2b6cb0; color: white; }
+    .btn-primary:hover { background: #2c5282; }
+    .flash { padding: 0.6rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.875rem; background: #c6f6d5; color: #276749; border: 1px solid #9ae6b4; }
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); overflow: hidden; }
+    th { background: #edf2f7; text-align: left; padding: 0.65rem 1rem; font-size: 0.8rem; color: #4a5568; text-transform: uppercase; letter-spacing: 0.05em; }
+    td { padding: 0.7rem 1rem; font-size: 0.875rem; color: #2d3748; border-top: 1px solid #e2e8f0; }
+    tr:hover td { background: #f7fafc; }
+    .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+    .p0 { background: #e6fffa; color: #234e52; }
+    .p1 { background: #fff5f5; color: #9b2c2c; }
+    .p2 { background: #fffbeb; color: #744210; }
+    .pna { background: #e2e8f0; color: #4a5568; }
+    .risk-high { color: #c53030; font-weight: 600; }
+    .risk-standard { color: #744210; }
+    .risk-low { color: #276749; }
+    .empty { text-align: center; padding: 3rem; color: #718096; }
+    a.row-link { color: #2b6cb0; text-decoration: none; font-weight: 600; }
+    a.row-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <div class="toolbar">
+    <h1>Navios Cadastrados</h1>
+    {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
+    <a href="/vessels/new" class="btn btn-primary">+ Novo Navio</a>
+    {{end}}
+  </div>
+
+  {{if .Flash}}
+  <div class="flash">{{.Flash}}</div>
+  {{end}}
+
+  {{if .Vessels}}
+  <table>
+    <thead>
+      <tr>
+        <th>Nome</th>
+        <th>IMO</th>
+        <th>Bandeira</th>
+        <th>Tipo</th>
+        <th>Risco</th>
+        <th>Última Inspeção</th>
+        <th>Prioridade</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Vessels}}
+      <tr>
+        <td><a href="/vessels/{{.ID}}" class="row-link">{{.Name}}</a></td>
+        <td>{{.IMO}}</td>
+        <td>{{if .Flag}}{{.Flag}}{{else}}<span style="color:#a0aec0">—</span>{{end}}</td>
+        <td>{{if .VesselType}}{{.VesselType}}{{else}}<span style="color:#a0aec0">—</span>{{end}}</td>
+        <td>
+          {{if .RiskLevel}}
+            {{if eq .RiskLevel "high"}}<span class="risk-high">Alto</span>
+            {{else if eq .RiskLevel "standard"}}<span class="risk-standard">Padrão</span>
+            {{else}}<span class="risk-low">Baixo</span>
+            {{end}}
+          {{else}}<span style="color:#a0aec0">—</span>{{end}}
+        </td>
+        <td>{{if .LastInspDate}}{{.LastInspDate}}{{else}}<span style="color:#a0aec0">Nunca</span>{{end}}</td>
+        <td>
+          {{if eq .Priority "P0"}}<span class="badge p0">P0</span>
+          {{else if eq .Priority "P1"}}<span class="badge p1">P1</span>
+          {{else if eq .Priority "P2"}}<span class="badge p2">P2</span>
+          {{else}}<span class="badge pna">N/A</span>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">Nenhum navio cadastrado ainda.</div>
+  {{end}}
+</div>
+</body>
+</html>

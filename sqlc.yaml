@@ -1,0 +1,21 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    # Onde estão as queries que você escreve
+    queries: "internal/db/query/"
+    # Onde estão as migrations (sqlc lê o schema de lá)
+    schema: "migrations/"
+    gen:
+      go:
+        package: "sqlc"
+        # Onde o código gerado vai ser criado
+        out: "internal/db/sqlc"
+        # Usa pgx/v5 em vez de database/sql (compatível com nosso pool)
+        sql_package: "pgx/v5"
+        # Gera tags json nos structs: `json:"name"` — útil para debug
+        emit_json_tags: true
+        # Campos nullable viram ponteiros Go (*string, *int32, *time.Time)
+        # em vez de tipos pgtype — muito mais fácil de trabalhar
+        emit_pointers_for_null_types: true
+        # Slices vazias em vez de nil para resultados :many sem linhas
+        emit_empty_slices: true

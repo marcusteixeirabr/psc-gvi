@@ -4,10 +4,10 @@ services:
   # É aqui que o VS Code vai "entrar" para trabalhar
   app:
     build:
-      context: ..               # usa o Dockerfile em .devcontainer/
+      context: .               # raiz do projeto (onde está o go.mod)
       dockerfile: .devcontainer/Dockerfile
     volumes:
-      - ..:/workspace:cached   # monta seu projeto dentro do container
+      - .:/workspace:cached    # monta o projeto dentro do container
     command: sleep infinity     # mantém o container vivo (VS Code assume o controle)
     environment:                # variáveis disponíveis dentro do container
       - DB_HOST=db

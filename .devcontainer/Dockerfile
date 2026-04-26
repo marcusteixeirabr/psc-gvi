@@ -1,30 +1,23 @@
-# Imagem base oficial do Go — versão 1.24, baseada no Debian
-# "bookworm" é o nome da versão do Debian (estável)
-FROM golang:1.24-bookworm
+# Alpine é ~200MB vs ~1.5GB do Debian bookworm
+FROM golang:1.26-alpine
 
-# Instala ferramentas do sistema operacional que vamos precisar
-RUN apt-get update && apt-get install -y \
+# apk é o gerenciador de pacotes do Alpine (equivalente ao apt-get do Debian)
+RUN apk add --no-cache \
     git \
     curl \
     wget \
     make \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+    bash \
+    postgresql-client
 
-# Instala ferramentas específicas do Go:
-#
-# air     → reinicia o servidor automaticamente quando você salva um arquivo
-#           (live reload — equivalente ao nodemon do Node.js)
-#
-# goose   → gerencia migrações do banco de dados
-#           (cria/atualiza tabelas de forma versionada)
-#
-# sqlc    → você escreve SQL puro, ele gera o código Go correspondente
-#           (sem ORM mágico — você vê exatamente o que acontece no banco)
-RUN go install github.com/air-verse/air@latest \
-    && go install github.com/pressly/goose/v3/cmd/goose@latest \
-    && go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+# Compila e instala as ferramentas Go, depois limpa o cache de módulos.
+# O && go clean -modcache no MESMO RUN é essencial: o cache só deixa de
+# existir na camada Docker se for removido no mesmo comando em que foi criado.
+# Sem isso, todas as dependências transitivas (goose baixa drivers para
+# ClickHouse, MySQL, SQL Server...) ficam embedadas na imagem — são ~3 GB.
+RUN go install github.com/air-verse/air@v1.65.1 \
+    && go install github.com/pressly/goose/v3/cmd/goose@v3.27.1 \
+    && go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 \
+    && go clean -modcache
 
-# Define o diretório de trabalho dentro do container
-# É aqui que seus arquivos do projeto vão aparecer
 WORKDIR /workspace

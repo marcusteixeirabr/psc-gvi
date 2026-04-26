@@ -1,14 +1,3 @@
-// Ponto de entrada da aplicação psc-gvi.
-//
-// Em Go, todo executável começa pela função main() no pacote main.
-// A convenção é colocar o main.go dentro de cmd/server/ — isso permite
-// que o projeto tenha múltiplos executáveis no futuro (ex: cmd/worker/ para scraping).
-//
-// Sequência de inicialização:
-//   1. Carrega configuração (variáveis de ambiente)
-//   2. Conecta ao banco de dados
-//   3. Monta o roteador Gin com as rotas
-//   4. Inicia o servidor HTTP
 package main
 
 import (
@@ -16,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/marcusteixeirabr/psc-gvi/internal/auth"
 	"github.com/marcusteixeirabr/psc-gvi/internal/config"
 	"github.com/marcusteixeirabr/psc-gvi/internal/db"
 )
@@ -24,8 +14,6 @@ func main() {
 	// ── 1. Configuração ────────────────────────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {
-		// log.Fatal imprime a mensagem e chama os.Exit(1) — encerra o processo.
-		// Fail fast: se não temos configuração, não adianta continuar.
 		log.Fatal("ERRO de configuração: ", err)
 	}
 
@@ -34,36 +22,53 @@ func main() {
 	if err != nil {
 		log.Fatal("ERRO ao conectar ao banco de dados: ", err)
 	}
-	// defer garante que o pool seja fechado quando main() terminar —
-	// mesmo que ocorra um panic. É o equivalente Go ao try/finally do Java.
 	defer pool.Close()
-
 	log.Println("Conectado ao PostgreSQL com sucesso.")
 
-	// ── 3. Roteador ────────────────────────────────────────────────────────
-	// gin.Default() cria um roteador com dois middlewares padrão:
-	//   - Logger: imprime cada requisição no terminal (método, rota, status, tempo)
-	//   - Recovery: captura panics e retorna 500 em vez de derrubar o servidor
-	//
-	// Em produção trocaremos por gin.New() com middlewares customizados,
-	// mas para desenvolvimento o Default é perfeito.
+	// ── 3. Sessões ─────────────────────────────────────────────────────────
+	// InitStore configura o cookie store com a chave secreta.
+	// Deve ser chamado antes de qualquer handler que use sessão.
+	auth.InitStore(cfg.SessionSecret)
+
+	// ── 4. Roteador ────────────────────────────────────────────────────────
 	router := gin.Default()
 
-	// Rota de health check: permite que ferramentas externas (GCP, Docker)
-	// verifiquem se a aplicação está viva sem autenticação.
+	// Carrega todos os arquivos .html de web/templates/ para memória.
+	// O Gin compila os templates uma vez na inicialização — eficiente.
+	// O path é relativo ao diretório de execução (raiz do projeto).
+	router.LoadHTMLGlob("web/templates/*.html")
+
+	// ── Rotas públicas (sem autenticação) ──────────────────────────────────
+	authHandler := auth.NewHandler(pool)
+
+	router.GET("/login", authHandler.ShowLogin)
+	router.POST("/login", authHandler.HandleLogin)
+	router.POST("/logout", authHandler.HandleLogout)
+
 	router.GET("/health", func(c *gin.Context) {
-		// c.JSON serializa a struct/map para JSON e define o Content-Type automaticamente.
-		// http.StatusOK = 200
-		c.JSON(http.StatusOK, gin.H{
-			"status": "ok",
-		})
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// ── 4. Servidor HTTP ────────────────────────────────────────────────────
+	// ── Rotas protegidas (exigem autenticação) ─────────────────────────────
+	// router.Group cria um grupo de rotas que compartilham middlewares.
+	// Todas as rotas dentro de "protected" passarão por auth.RequireAuth primeiro.
+	protected := router.Group("/")
+	protected.Use(auth.RequireAuth)
+	{
+		protected.GET("/", func(c *gin.Context) {
+			user := auth.GetUser(c)
+			c.JSON(http.StatusOK, gin.H{
+				"message":      "Dashboard em construção",
+				"user":         user.DisplayName,
+				"role":         user.Role,
+			})
+		})
+	}
+
+	// ── 5. Servidor HTTP ────────────────────────────────────────────────────
 	addr := ":" + cfg.Port
 	log.Printf("Servidor iniciado em http://localhost%s (env: %s)\n", addr, cfg.Env)
 
-	// router.Run() inicia o servidor e bloqueia — só retorna se houver erro.
 	if err := router.Run(addr); err != nil {
 		log.Fatal("ERRO ao iniciar servidor: ", err)
 	}

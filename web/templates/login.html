@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login — PSC GVI</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: system-ui, sans-serif;
+            background: #f0f4f8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 380px;
+        }
+
+        .card h1 {
+            font-size: 1.25rem;
+            color: #1a202c;
+            margin-bottom: 0.25rem;
+        }
+
+        .card p.subtitle {
+            font-size: 0.85rem;
+            color: #718096;
+            margin-bottom: 1.75rem;
+        }
+
+        label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 0.35rem;
+        }
+
+        input {
+            width: 100%;
+            padding: 0.6rem 0.75rem;
+            border: 1px solid #cbd5e0;
+            border-radius: 5px;
+            font-size: 0.95rem;
+            margin-bottom: 1.1rem;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        input:focus { border-color: #3182ce; }
+
+        button[type="submit"] {
+            width: 100%;
+            padding: 0.65rem;
+            background: #2b6cb0;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        button[type="submit"]:hover { background: #2c5282; }
+
+        .error {
+            background: #fff5f5;
+            border: 1px solid #feb2b2;
+            color: #c53030;
+            border-radius: 5px;
+            padding: 0.6rem 0.75rem;
+            font-size: 0.875rem;
+            margin-bottom: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>PSC GVI — Itajaí</h1>
+        <p class="subtitle">Grupo de Vistoria e Inspeção</p>
+
+        {{/* .error é a variável passada pelo handler Go via gin.H{"error": ...} */}}
+        {{if .error}}
+        <div class="error">{{.error}}</div>
+        {{end}}
+
+        <form method="POST" action="/login">
+            <label for="username">Usuário</label>
+            <input type="text" id="username" name="username"
+                   autocomplete="username" required autofocus>
+
+            <label for="password">Senha</label>
+            <input type="password" id="password" name="password"
+                   autocomplete="current-password" required>
+
+            <button type="submit">Entrar</button>
+        </form>
+    </div>
+</body>
+</html>

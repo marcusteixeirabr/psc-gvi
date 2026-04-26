@@ -21,9 +21,10 @@ VALUES (
     'admin',
     'Administrador',
     -- Hash bcrypt da senha "admin123" com custo 10.
+    -- Gerado com: bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
     -- O bcrypt inclui o salt dentro do próprio hash, portanto é seguro
     -- armazenar diretamente no banco.
-    '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi',
+    '$2a$10$Rdw7FdqlZ3hlqwFsTkyde.c8AnrrWC633oUWcVbGPPHXZzo.3yiFq',
     'admin',
     true
 );

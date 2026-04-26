@@ -26,6 +26,10 @@ type Config struct {
 	DBName     string
 	DBUser     string
 	DBPassword string
+
+	// Chave para assinar e criptografar o cookie de sessão.
+	// Deve ter no mínimo 32 bytes. Use um valor aleatório longo em produção.
+	SessionSecret string
 }
 
 // DSN retorna a string de conexão no formato que o pgx espera.
@@ -54,18 +58,21 @@ func Load() (Config, error) {
 	_ = godotenv.Load()
 
 	cfg := Config{
-		Port:       getEnv("PORT", "8080"),
-		Env:        getEnv("ENV", "development"),
-		DBHost:     getEnv("DB_HOST", "localhost"),
-		DBPort:     getEnv("DB_PORT", "5432"),
-		DBName:     getEnv("DB_NAME", "pscgvi"),
-		DBUser:     getEnv("DB_USER", "pscgvi"),
-		DBPassword: getEnv("DB_PASSWORD", ""),
+		Port:          getEnv("PORT", "8080"),
+		Env:           getEnv("ENV", "development"),
+		DBHost:        getEnv("DB_HOST", "localhost"),
+		DBPort:        getEnv("DB_PORT", "5432"),
+		DBName:        getEnv("DB_NAME", "pscgvi"),
+		DBUser:        getEnv("DB_USER", "pscgvi"),
+		DBPassword:    getEnv("DB_PASSWORD", ""),
+		SessionSecret: getEnv("SESSION_SECRET", ""),
 	}
 
-	// DB_PASSWORD é obrigatório — sem ele não tem como conectar.
 	if cfg.DBPassword == "" {
 		return Config{}, fmt.Errorf("variável de ambiente DB_PASSWORD não definida")
+	}
+	if cfg.SessionSecret == "" {
+		return Config{}, fmt.Errorf("variável de ambiente SESSION_SECRET não definida")
 	}
 
 	return cfg, nil

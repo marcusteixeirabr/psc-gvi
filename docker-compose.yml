@@ -1,0 +1,42 @@
+services:
+
+  # ── Serviço 1: Ambiente de desenvolvimento Go ─────────────────────────────
+  # É aqui que o VS Code vai "entrar" para trabalhar
+  app:
+    build:
+      context: ..               # usa o Dockerfile em .devcontainer/
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached   # monta seu projeto dentro do container
+    command: sleep infinity     # mantém o container vivo (VS Code assume o controle)
+    environment:                # variáveis disponíveis dentro do container
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=pscgvi
+      - DB_USER=pscgvi
+      - DB_PASSWORD=devpassword
+      - PORT=8080
+      - ENV=development
+    depends_on:
+      - db                     # só sobe depois que o banco estiver pronto
+    ports:
+      - "8080:8080"            # acesso ao servidor Go: localhost:8080
+
+  # ── Serviço 2: Banco de dados PostgreSQL ──────────────────────────────────
+  # Roda em paralelo, isolado, sem instalar nada na sua máquina
+  db:
+    image: postgres:16-alpine  # imagem oficial, versão Alpine (menor tamanho)
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pscgvi
+      POSTGRES_USER: pscgvi
+      POSTGRES_PASSWORD: devpassword
+    volumes:
+      - postgres-data:/var/lib/postgresql/data  # dados persistem entre reinicializações
+    ports:
+      - "5432:5432"            # acesso direto ao banco (para ferramentas como DBeaver)
+
+# Volume nomeado: os dados do PostgreSQL ficam aqui
+# Mesmo que você destrua o container, os dados sobrevivem
+volumes:
+  postgres-data:

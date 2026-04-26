@@ -1,0 +1,42 @@
+{
+  // Nome que aparece no VS Code
+  "name": "psc-gvi (Go + PostgreSQL)",
+
+  // Usa o docker-compose.yml que criamos
+  "dockerComposeFile": "../docker-compose.yml",
+
+  // VS Code vai "entrar" no serviço "app" (o container Go)
+  "service": "app",
+
+  // Pasta de trabalho dentro do container
+  "workspaceFolder": "/workspace",
+
+  // Extensões instaladas DENTRO do container
+  // (separadas das suas extensões locais do VS Code)
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",                    // suporte oficial ao Go (autocomplete, debug)
+        "ms-azuretools.vscode-docker",  // gerenciar containers pelo VS Code
+        "humao.rest-client",            // testar APIs HTTP diretamente no editor
+        "mtxr.sqltools",                // cliente SQL integrado
+        "mtxr.sqltools-driver-pg"       // driver PostgreSQL para o SQLTools
+      ],
+      "settings": {
+        "go.toolsManagement.autoUpdate": true,
+        "[go]": {
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        }
+      }
+    }
+  },
+
+  // Portas acessíveis do seu computador para dentro do container
+  "forwardPorts": [8080, 5432],
+
+  // Roda após o container subir: instala dependências Go se existirem
+  "postCreateCommand": "if [ -f go.mod ]; then go mod tidy; fi"
+}

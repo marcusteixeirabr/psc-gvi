@@ -1,0 +1,25 @@
+# Binários
+/psc-gvi
+/bin/
+
+# Ambiente
+.env
+*.env
+
+# Go
+*.test
+*.out
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

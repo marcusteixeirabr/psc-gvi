@@ -1,42 +1,80 @@
 {
-  // Nome que aparece no VS Code
   "name": "psc-gvi (Go + PostgreSQL)",
 
-  // Usa o docker-compose.yml que criamos
   "dockerComposeFile": "../docker-compose.yml",
-
-  // VS Code vai "entrar" no serviço "app" (o container Go)
   "service": "app",
-
-  // Pasta de trabalho dentro do container
   "workspaceFolder": "/workspace",
 
-  // Extensões instaladas DENTRO do container
-  // (separadas das suas extensões locais do VS Code)
   "customizations": {
     "vscode": {
+
       "extensions": [
-        "golang.go",                    // suporte oficial ao Go (autocomplete, debug)
-        "ms-azuretools.vscode-docker",  // gerenciar containers pelo VS Code
-        "humao.rest-client",            // testar APIs HTTP diretamente no editor
-        "mtxr.sqltools",                // cliente SQL integrado
-        "mtxr.sqltools-driver-pg"       // driver PostgreSQL para o SQLTools
+        // ── Go ────────────────────────────────────────────────────────────────
+        "golang.go",                        // extensão oficial: autocomplete, debug,
+                                            // go to definition, testes integrados
+                                            // instala gopls (language server) automaticamente
+
+        // ── Qualidade de código ───────────────────────────────────────────────
+        "usernamehw.errorlens",             // mostra erros e warnings INLINE no código
+                                            // essencial para aprendizado: você vê o erro
+                                            // exatamente onde ele está, sem precisar olhar
+                                            // o painel de problemas
+
+        // ── Git ───────────────────────────────────────────────────────────────
+        "eamodio.gitlens",                  // superpoderes de git: quem escreveu cada linha,
+                                            // histórico inline, comparação de branches
+
+        // ── Banco de dados ────────────────────────────────────────────────────
+        "mtxr.sqltools",                    // cliente SQL integrado no VS Code
+        "mtxr.sqltools-driver-pg",          // driver PostgreSQL para o SQLTools
+
+        // ── Testes de API ─────────────────────────────────────────────────────
+        "humao.rest-client",                // arquivos .http para testar endpoints
+                                            // ex: GET http://localhost:8080/vessels
+
+        // ── Docker ────────────────────────────────────────────────────────────
+        "ms-azuretools.vscode-docker",      // gerenciar containers sem sair do VS Code
+
+        // ── Produtividade ─────────────────────────────────────────────────────
+        "streetsidesoftware.code-spell-checker",  // corretor ortográfico (útil em comentários)
+        "wayou.vscode-todo-highlight"             // destaca TODO, FIXME, HACK no código
       ],
+
       "settings": {
-        "go.toolsManagement.autoUpdate": true,
+        // ── Formatação automática ao salvar ───────────────────────────────────
         "[go]": {
           "editor.formatOnSave": true,
           "editor.codeActionsOnSave": {
-            "source.organizeImports": "explicit"
+            "source.organizeImports": "explicit"   // organiza imports automaticamente
           }
-        }
+        },
+
+        // ── Gopls (language server do Go) ─────────────────────────────────────
+        "go.useLanguageServer": true,
+        "go.toolsManagement.autoUpdate": true,
+
+        // ── SQLTools: conexão com o PostgreSQL do container ───────────────────
+        "sqltools.connections": [
+          {
+            "name": "psc-gvi (dev)",
+            "driver": "PostgreSQL",
+            "host": "db",
+            "port": 5432,
+            "database": "pscgvi",
+            "username": "pscgvi",
+            "password": "devpassword"
+          }
+        ],
+
+        // ── Editor geral ──────────────────────────────────────────────────────
+        "editor.rulers": [100],            // linha guia em 100 caracteres (padrão Go)
+        "editor.minimap.enabled": false,   // remove o minimapa (mais espaço para código)
+        "files.trimTrailingWhitespace": true
       }
     }
   },
 
-  // Portas acessíveis do seu computador para dentro do container
   "forwardPorts": [8080, 5432],
 
-  // Roda após o container subir: instala dependências Go se existirem
   "postCreateCommand": "if [ -f go.mod ]; then go mod tidy; fi"
 }

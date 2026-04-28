@@ -137,22 +137,13 @@
       </div>
 
       <div class="actions">
-        <button type="submit" form="vessel-form" class="btn btn-primary">
+        <button type="submit" class="btn btn-primary">
           {{if .Vessel}}Salvar Alterações{{else}}Cadastrar Navio{{end}}
         </button>
-        {{if and .Vessel (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
-        <button type="submit" form="atualizar-form" class="btn" style="background:#276749;color:white"
-                onclick="this.textContent='Atualizando…';this.disabled=true">
-          ↻ Atualizar dados
-        </button>
-        {{end}}
         <a href="{{if .Vessel}}/vessels/{{.Vessel.ID}}{{else}}/vessels{{end}}" class="btn btn-secondary">Cancelar</a>
       </div>
     </div>
   </form>
-  {{if and .Vessel (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
-  <form id="atualizar-form" method="POST" action="/vessels/{{.Vessel.ID}}/atualizar"></form>
-  {{end}}
 </div>
 
 <script>

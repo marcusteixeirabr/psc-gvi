@@ -537,6 +537,21 @@ func (q *Queries) UpdateVesselIMO(ctx context.Context, arg UpdateVesselIMOParams
 	return err
 }
 
+const updateVesselDimensions = `-- name: UpdateVesselDimensions :exec
+UPDATE vessels SET length_m = $2, beam_m = $3, updated_at = NOW() WHERE id = $1
+`
+
+type UpdateVesselDimensionsParams struct {
+	ID      int64          `json:"id"`
+	LengthM pgtype.Numeric `json:"length_m"`
+	BeamM   pgtype.Numeric `json:"beam_m"`
+}
+
+func (q *Queries) UpdateVesselDimensions(ctx context.Context, arg UpdateVesselDimensionsParams) error {
+	_, err := q.db.Exec(ctx, updateVesselDimensions, arg.ID, arg.LengthM, arg.BeamM)
+	return err
+}
+
 const updateVesselLastInspectionDate = `-- name: UpdateVesselLastInspectionDate :exec
 UPDATE vessels SET last_inspection_date = $2, updated_at = NOW() WHERE id = $1
 `

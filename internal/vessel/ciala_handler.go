@@ -19,17 +19,24 @@ import (
 // CIALAHandler gerencia as consultas ao portal CIALA.
 // O cliente HTTP é criado na primeira requisição e reutilizado — login único por sessão do servidor.
 type CIALAHandler struct {
-	q        *sqlc.Queries
-	cialaURL string
-	username string
-	password string
-	mu       sync.Mutex
-	client   *scraper.CIALAClient
+	q               *sqlc.Queries
+	cialaURL        string
+	username        string
+	password        string
+	vesselFinderURL string
+	mu              sync.Mutex
+	client          *scraper.CIALAClient
 }
 
 // NewCIALAHandler cria o handler.
-func NewCIALAHandler(q *sqlc.Queries, cialaURL, username, password string) *CIALAHandler {
-	return &CIALAHandler{q: q, cialaURL: cialaURL, username: username, password: password}
+func NewCIALAHandler(q *sqlc.Queries, cialaURL, username, password, vesselFinderURL string) *CIALAHandler {
+	return &CIALAHandler{
+		q:               q,
+		cialaURL:        cialaURL,
+		username:        username,
+		password:        password,
+		vesselFinderURL: vesselFinderURL,
+	}
 }
 
 // getClient retorna o cliente CIALA, criando-o na primeira chamada.
@@ -186,6 +193,115 @@ func (h *CIALAHandler) BatchStream(c *gin.Context) {
 	}
 
 	send("done", fmt.Sprintf("%d atualizado(s) · %d falha(s)", found, failed))
+}
+
+// AtualizarDados — POST /vessels/:id/atualizar
+// Pipeline completo: IMO (VesselFinder) → dimensões (VesselFinder) → CIALA.
+func (h *CIALAHandler) AtualizarDados(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/vessels")
+		return
+	}
+
+	v, err := h.q.GetVessel(c.Request.Context(), id)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/vessels")
+		return
+	}
+
+	redirectErr := func(msg string) {
+		c.Redirect(http.StatusFound,
+			fmt.Sprintf("/vessels/%d/edit?error=%s", id, url.QueryEscape(msg)))
+	}
+
+	// ── Passo 1: navio sem IMO → busca no VesselFinder pelo nome ──────────
+	imo := ""
+	if v.Imo != nil {
+		imo = *v.Imo
+	}
+	if imo == "" {
+		loa := numericToFloat(v.LengthM)
+		beam := numericToFloat(v.BeamM)
+		found, findErr := scraper.FindIMO(c.Request.Context(), h.vesselFinderURL, v.Name, loa, beam)
+		if findErr != nil {
+			if strings.Contains(findErr.Error(), "múltiplos navios") || strings.Contains(findErr.Error(), "ambíguo") {
+				redirectErr("Não foi possível resolver ambiguidade, entre com os dados manualmente.")
+			} else {
+				redirectErr("IMO não encontrado: " + findErr.Error())
+			}
+			return
+		}
+		if err := h.q.UpdateVesselIMO(c.Request.Context(), sqlc.UpdateVesselIMOParams{
+			ID: id, Imo: &found,
+		}); err != nil {
+			redirectErr("Erro ao salvar IMO: " + err.Error())
+			return
+		}
+		imo = found
+		v, _ = h.q.GetVessel(c.Request.Context(), id)
+	}
+
+	// ── Passo 2: sem LOA ou Beam → busca dimensões no VesselFinder pelo IMO ──
+	loaVal := numericToFloat(v.LengthM)
+	beamVal := numericToFloat(v.BeamM)
+	if loaVal == 0 || beamVal == 0 {
+		results, searchErr := scraper.SearchVesselFinder(c.Request.Context(), h.vesselFinderURL, imo)
+		if searchErr == nil && len(results) > 0 {
+			if len(results) > 1 && loaVal == 0 && beamVal == 0 {
+				redirectErr("Não foi possível resolver ambiguidade, entre com os dados manualmente.")
+				return
+			}
+			r := results[0]
+			if r.LOA > 0 || r.Beam > 0 {
+				_ = h.q.UpdateVesselDimensions(c.Request.Context(), sqlc.UpdateVesselDimensionsParams{
+					ID:      id,
+					LengthM: floatToNumeric(r.LOA),
+					BeamM:   floatToNumeric(r.Beam),
+				})
+				loaVal = r.LOA
+				beamVal = r.Beam
+			}
+		}
+	}
+
+	// ── Passo 3: consulta o CIALA ─────────────────────────────────────────
+	client, err := h.getClient()
+	if err != nil {
+		redirectErr("Erro ao criar cliente CIALA: " + err.Error())
+		return
+	}
+	result, err := client.LookupIMO(c.Request.Context(), imo)
+	if err != nil {
+		log.Printf("[atualizar] CIALA falhou para IMO %s, tentando reset: %v", imo, err)
+		h.resetClient()
+		if c2, err2 := h.getClient(); err2 == nil {
+			result, err = c2.LookupIMO(c.Request.Context(), imo)
+		}
+	}
+	if err != nil {
+		redirectErr("CIALA: " + err.Error())
+		return
+	}
+
+	if err := h.save(c, id, result); err != nil {
+		redirectErr("Erro ao salvar dados CIALA: " + err.Error())
+		return
+	}
+
+	msg := "Dados atualizados: " + cialaResultSummary(result)
+	if loaVal > 0 || beamVal > 0 {
+		msg += fmt.Sprintf(" · LOA %.0f m · Boca %.0f m", loaVal, beamVal)
+	}
+	c.Redirect(http.StatusFound,
+		fmt.Sprintf("/vessels/%d?flash=%s", id, url.QueryEscape(msg)))
+}
+
+// floatToNumeric converte float64 em pgtype.Numeric para persistência.
+func floatToNumeric(f float64) pgtype.Numeric {
+	var n pgtype.Numeric
+	_ = n.Scan(strconv.FormatFloat(f, 'f', 2, 64))
+	return n
 }
 
 // save persiste os dados CIALA no banco.

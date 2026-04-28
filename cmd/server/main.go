@@ -69,7 +69,7 @@ func main() {
 	// ── Handlers ───────────────────────────────────────────────────────────
 	vesselHandler     := vessel.NewHandler(queries)
 	imoFinder         := vessel.NewIMOFinder(queries, cfg.VesselFinderURL)
-	cialaHandler      := vessel.NewCIALAHandler(queries, cfg.CIALAURL, cfg.CIALAUsername, cfg.CIALAPassword)
+	cialaHandler      := vessel.NewCIALAHandler(queries, cfg.CIALAURL, cfg.CIALAUsername, cfg.CIALAPassword, cfg.VesselFinderURL)
 	portcallHandler   := portcall.NewHandler(queries, cfg.ZP21URL)
 	escalaHandler     := portcall.NewEscalaHandler(queries)
 	dashboardHandler  := dashboard.NewHandler(queries)
@@ -119,6 +119,7 @@ func main() {
 			editors.GET("/imo-search", imoFinder.BatchProgressPage)
 			editors.GET("/imo-search/stream", imoFinder.BatchStream)
 			editors.POST("/vessels/:id/ciala", cialaHandler.LookupVessel)
+			editors.POST("/vessels/:id/atualizar", cialaHandler.AtualizarDados)
 			editors.GET("/ciala-search", cialaHandler.BatchProgressPage)
 			editors.GET("/ciala-search/stream", cialaHandler.BatchStream)
 		}

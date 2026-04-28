@@ -37,7 +37,7 @@ func FindIMO(ctx context.Context, baseURL, vesselName string, loa, beam float64)
 		return "", fmt.Errorf("VESSEL_FINDER_URL não configurada")
 	}
 
-	results, err := searchVesselFinder(ctx, baseURL, vesselName)
+	results, err := SearchVesselFinder(ctx, baseURL, vesselName)
 	if err != nil {
 		return "", err
 	}
@@ -56,8 +56,9 @@ func FindIMO(ctx context.Context, baseURL, vesselName string, loa, beam float64)
 	return disambiguateByDimensions(vesselName, results, loa, beam)
 }
 
-// searchVesselFinder busca na página de resultados do VesselFinder e extrai candidatos.
-func searchVesselFinder(ctx context.Context, baseURL, vesselName string) ([]VesselFinderResult, error) {
+// SearchVesselFinder busca na página de resultados do VesselFinder e extrai candidatos.
+// Pode ser chamado com o nome do navio OU com o número IMO como termo de busca.
+func SearchVesselFinder(ctx context.Context, baseURL, vesselName string) ([]VesselFinderResult, error) {
 	searchURL := baseURL + "/vessels?name=" + url.QueryEscape(vesselName)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)

@@ -77,6 +77,10 @@ SELECT * FROM vessels
 WHERE imo IS NOT NULL AND acompanhado = TRUE
 ORDER BY name;
 
+-- name: UpdateVesselDimensions :exec
+-- Persiste LOA e Beam descobertos via VesselFinder.
+UPDATE vessels SET length_m = $2, beam_m = $3, updated_at = NOW() WHERE id = $1;
+
 -- name: UpdateVesselLastInspectionDate :exec
 -- Atualiza a data da última inspeção PSC após registro de nova inspeção pelo GVI.
 UPDATE vessels SET last_inspection_date = $2, updated_at = NOW() WHERE id = $1;

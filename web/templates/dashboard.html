@@ -15,11 +15,10 @@
     .btn-secondary { background: #edf2f7; color: #4a5568; }
     .btn-secondary:hover { background: #e2e8f0; }
 
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
-    .stat { background: white; border-radius: 8px; padding: 1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.07); }
+    .stats { margin-bottom: 1.5rem; }
+    .stat { background: white; border-radius: 8px; padding: 1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.07); display: inline-block; min-width: 220px; }
     .stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: #718096; font-weight: 700; }
     .stat-value { font-size: 1.9rem; font-weight: 700; color: #1a202c; margin-top: 0.15rem; }
-    .stat-window .stat-value { color: #c53030; }
     .stat-sub { font-size: 0.72rem; color: #718096; margin-top: 0.2rem; }
     .kpi-green .stat-value { color: #276749; }
     .kpi-orange .stat-value { color: #c05621; }
@@ -83,18 +82,6 @@
   {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
 
   <div class="stats">
-    <div class="stat">
-      <div class="stat-label">Navios Previstos</div>
-      <div class="stat-value">{{.Total}}</div>
-    </div>
-    <div class="stat stat-window">
-      <div class="stat-label">Na Janela (P1 + P2)</div>
-      <div class="stat-value">{{.InWindow}}</div>
-    </div>
-    <div class="stat">
-      <div class="stat-label">Fora da Janela / Aguardando CIALA</div>
-      <div class="stat-value">{{sub .Total .InWindow}}</div>
-    </div>
     <div class="stat kpi-{{.MonthColor}}">
       <div class="stat-label">{{.MonthLabel}} — % Inspecionados</div>
       <div class="stat-value">{{printf "%.0f" .MonthKPI}}%</div>

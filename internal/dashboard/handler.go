@@ -57,15 +57,13 @@ func (e Entry) InWindow() bool {
 }
 
 type page struct {
-	User          *auth.UserSession
-	Entries       []Entry
-	Total         int
-	InWindow      int
-	Flash         string
-	MonthLabel    string
-	MonthKPI      float64
-	MonthColor    string // "green" | "orange" | "red"
-	MonthTotal    int64
+	User           *auth.UserSession
+	Entries        []Entry
+	Flash          string
+	MonthLabel     string
+	MonthKPI       float64
+	MonthColor     string // "green" | "orange" | "red"
+	MonthTotal     int64
 	MonthInspected int64
 }
 
@@ -157,13 +155,6 @@ func (h *Handler) Index(c *gin.Context) {
 		return priorityOrder(entries[i].Priority) < priorityOrder(entries[j].Priority)
 	})
 
-	inWindow := 0
-	for _, e := range entries {
-		if e.InWindow() {
-			inWindow++
-		}
-	}
-
 	now := time.Now()
 	kpiRow, _ := h.q.CountReportKPI(ctx, sqlc.CountReportKPIParams{
 		Year:  int32(now.Year()),
@@ -181,11 +172,9 @@ func (h *Handler) Index(c *gin.Context) {
 	}
 
 	c.HTML(http.StatusOK, "dashboard.html", page{
-		User:           auth.GetUser(c),
-		Entries:        entries,
-		Total:          len(entries),
-		InWindow:       inWindow,
-		Flash:          c.Query("flash"),
+		User:    auth.GetUser(c),
+		Entries: entries,
+		Flash:   c.Query("flash"),
 		MonthLabel:     fmt.Sprintf("%s %d", ptMonthName(now.Month()), now.Year()),
 		MonthKPI:       monthKPI,
 		MonthColor:     monthColor,

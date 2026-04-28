@@ -111,20 +111,10 @@
         </div>
 
         <div>
-          <label>Tipo</label>
-          <select name="vessel_type">
-            <option value="">— selecione —</option>
-            {{$vt := ""}}{{if .Vessel}}{{$vt = .Vessel.VesselType}}{{end}}
-            <option value="Bulk Carrier"    {{if eq $vt "Bulk Carrier"}}selected{{end}}>Bulk Carrier</option>
-            <option value="Container"       {{if eq $vt "Container"}}selected{{end}}>Container</option>
-            <option value="General Cargo"   {{if eq $vt "General Cargo"}}selected{{end}}>General Cargo</option>
-            <option value="Tanker"          {{if eq $vt "Tanker"}}selected{{end}}>Tanker</option>
-            <option value="Chemical Tanker" {{if eq $vt "Chemical Tanker"}}selected{{end}}>Chemical Tanker</option>
-            <option value="Ro-Ro"           {{if eq $vt "Ro-Ro"}}selected{{end}}>Ro-Ro</option>
-            <option value="Passenger"       {{if eq $vt "Passenger"}}selected{{end}}>Passenger</option>
-            <option value="Offshore"           {{if eq $vt "Offshore"}}selected{{end}}>Offshore</option>
-            <option value="Refrigerated Cargo" {{if eq $vt "Refrigerated Cargo"}}selected{{end}}>Refrigerated Cargo</option>
-          </select>
+          <label>Tipo <span class="hint">preenchido automaticamente pelo CIALA</span></label>
+          <input type="text" name="vessel_type"
+            placeholder="ex: Bulk Carrier, Tanker, Container…"
+            value="{{if .Vessel}}{{.Vessel.VesselType}}{{end}}">
         </div>
 
         <div>
@@ -142,24 +132,19 @@
       </div>
 
       <div class="ciala-note">
-        ⚓ <strong>Risco e última inspeção</strong> são preenchidos via CIALA.
-        {{if and .Vessel .Vessel.IMO (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
-          <a href="/vessels/{{.Vessel.ID}}" style="margin-left:0.5rem;color:#2b6cb0;font-weight:600">
-            Ver navio →
-          </a>
-          (o botão "Consultar CIALA" está na página do navio)
-        {{end}}
+        ⚓ <strong>Risco, última inspeção, tipo e dimensões</strong> são atualizados automaticamente
+        pelo botão abaixo (VesselFinder + CIALA).
       </div>
 
       <div class="actions">
         <button type="submit" class="btn btn-primary">
           {{if .Vessel}}Salvar Alterações{{else}}Cadastrar Navio{{end}}
         </button>
-        {{if and .Vessel .Vessel.IMO (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
-        <form method="POST" action="/vessels/{{.Vessel.ID}}/ciala" style="display:inline">
+        {{if and .Vessel (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
+        <form method="POST" action="/vessels/{{.Vessel.ID}}/atualizar" style="display:inline">
           <button type="submit" class="btn" style="background:#276749;color:white"
-                  onclick="this.textContent='Consultando…';this.disabled=true;this.form.submit()">
-            🔍 Consultar CIALA
+                  onclick="this.textContent='Atualizando…';this.disabled=true;this.form.submit()">
+            ↻ Atualizar dados
           </button>
         </form>
         {{end}}

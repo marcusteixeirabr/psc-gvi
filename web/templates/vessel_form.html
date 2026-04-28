@@ -50,7 +50,7 @@
   <div class="error">{{.Error}}</div>
   {{end}}
 
-  <form method="POST" action="{{if .Vessel}}/vessels/{{.Vessel.ID}}{{else}}/vessels{{end}}">
+  <form id="vessel-form" method="POST" action="{{if .Vessel}}/vessels/{{.Vessel.ID}}{{else}}/vessels{{end}}">
     {{/* acompanhado: enviado como hidden=true (default) e sobrescrito pelo checkbox nao_acompanhado */}}
     <input type="hidden" name="acompanhado" value="true">
 
@@ -137,21 +137,22 @@
       </div>
 
       <div class="actions">
-        <button type="submit" class="btn btn-primary">
+        <button type="submit" form="vessel-form" class="btn btn-primary">
           {{if .Vessel}}Salvar Alterações{{else}}Cadastrar Navio{{end}}
         </button>
         {{if and .Vessel (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
-        <form method="POST" action="/vessels/{{.Vessel.ID}}/atualizar" style="display:inline">
-          <button type="submit" class="btn" style="background:#276749;color:white"
-                  onclick="this.textContent='Atualizando…';this.disabled=true;this.form.submit()">
-            ↻ Atualizar dados
-          </button>
-        </form>
+        <button type="submit" form="atualizar-form" class="btn" style="background:#276749;color:white"
+                onclick="this.textContent='Atualizando…';this.disabled=true">
+          ↻ Atualizar dados
+        </button>
         {{end}}
         <a href="{{if .Vessel}}/vessels/{{.Vessel.ID}}{{else}}/vessels{{end}}" class="btn btn-secondary">Cancelar</a>
       </div>
     </div>
   </form>
+  {{if and .Vessel (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
+  <form id="atualizar-form" method="POST" action="/vessels/{{.Vessel.ID}}/atualizar"></form>
+  {{end}}
 </div>
 
 <script>

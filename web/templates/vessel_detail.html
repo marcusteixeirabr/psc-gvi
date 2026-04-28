@@ -190,13 +190,13 @@
         </dd>
       </dl>
     </div>
-    {{if and .Vessel.IMO (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
+    {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
     <div style="margin-top:1rem">
-      <form method="POST" action="/vessels/{{.Vessel.ID}}/ciala" style="display:inline">
+      <form method="POST" action="/vessels/{{.Vessel.ID}}/atualizar" style="display:inline">
         <button type="submit"
                 style="background:#276749;color:white;border:none;padding:0.4rem 0.9rem;border-radius:5px;font-size:0.85rem;font-weight:600;cursor:pointer"
-                onclick="this.textContent='Consultando…';this.disabled=true;this.form.submit()">
-          🔍 Consultar CIALA
+                onclick="this.textContent='Atualizando…';this.disabled=true;this.form.submit()">
+          ↻ Atualizar dados
         </button>
       </form>
     </div>

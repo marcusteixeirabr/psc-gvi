@@ -57,11 +57,16 @@ func (e Entry) InWindow() bool {
 }
 
 type page struct {
-	User      *auth.UserSession
-	Entries   []Entry
-	Total     int
-	InWindow  int
-	Flash     string
+	User          *auth.UserSession
+	Entries       []Entry
+	Total         int
+	InWindow      int
+	Flash         string
+	MonthLabel    string
+	MonthKPI      float64
+	MonthColor    string // "green" | "orange" | "red"
+	MonthTotal    int64
+	MonthInspected int64
 }
 
 // Index — GET /
@@ -159,12 +164,33 @@ func (h *Handler) Index(c *gin.Context) {
 		}
 	}
 
+	now := time.Now()
+	kpiRow, _ := h.q.CountReportKPI(ctx, sqlc.CountReportKPIParams{
+		Year:  int32(now.Year()),
+		Month: int32(now.Month()),
+	})
+	monthKPI := 0.0
+	if kpiRow.Total > 0 {
+		monthKPI = float64(kpiRow.Inspected) / float64(kpiRow.Total) * 100
+	}
+	monthColor := "red"
+	if monthKPI >= 20 {
+		monthColor = "green"
+	} else if monthKPI >= 10 {
+		monthColor = "orange"
+	}
+
 	c.HTML(http.StatusOK, "dashboard.html", page{
-		User:     auth.GetUser(c),
-		Entries:  entries,
-		Total:    len(entries),
-		InWindow: inWindow,
-		Flash:    c.Query("flash"),
+		User:           auth.GetUser(c),
+		Entries:        entries,
+		Total:          len(entries),
+		InWindow:       inWindow,
+		Flash:          c.Query("flash"),
+		MonthLabel:     fmt.Sprintf("%s %d", ptMonthName(now.Month()), now.Year()),
+		MonthKPI:       monthKPI,
+		MonthColor:     monthColor,
+		MonthTotal:     kpiRow.Total,
+		MonthInspected: kpiRow.Inspected,
 	})
 }
 
@@ -251,4 +277,13 @@ func isOld(yearBuilt *int32) bool {
 		return false
 	}
 	return time.Now().Year()-int(*yearBuilt) >= 30
+}
+
+func ptMonthName(m time.Month) string {
+	names := [...]string{"", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+		"Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"}
+	if m >= 1 && m <= 12 {
+		return names[m]
+	}
+	return ""
 }

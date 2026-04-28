@@ -30,6 +30,18 @@ type Config struct {
 	// Chave para assinar e criptografar o cookie de sessão.
 	// Deve ter no mínimo 32 bytes. Use um valor aleatório longo em produção.
 	SessionSecret string
+
+	// URL da página de Manobras Previstas do ZP-21.
+	// Configurável porque pode mudar sem aviso prévio.
+	ZP21URL string
+
+	// URL base do VesselFinder — usado para buscar IMO por nome de navio.
+	VesselFinderURL string
+
+	// CIALA — Acordo de Viña del Mar (histórico PSC + grau de risco).
+	CIALAURL      string
+	CIALAUsername string
+	CIALAPassword string
 }
 
 // DSN retorna a string de conexão no formato que o pgx espera.
@@ -66,6 +78,11 @@ func Load() (Config, error) {
 		DBUser:        getEnv("DB_USER", "pscgvi"),
 		DBPassword:    getEnv("DB_PASSWORD", ""),
 		SessionSecret: getEnv("SESSION_SECRET", ""),
+		ZP21URL:          getEnv("ZP21_URL", ""),
+		VesselFinderURL:  getEnv("VESSEL_FINDER_URL", "https://www.vesselfinder.com"),
+		CIALAURL:         getEnv("CIALA_URL", "https://ciala.acuerdolatinoamericano.org"),
+		CIALAUsername:    getEnv("CIALA_USERNAME", ""),
+		CIALAPassword:    getEnv("CIALA_PASSWORD", ""),
 	}
 
 	if cfg.DBPassword == "" {

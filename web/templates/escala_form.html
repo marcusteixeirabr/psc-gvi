@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Editar Escala — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; color: #2d3748; }
+    .container { max-width: 600px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.2rem; margin-bottom: 0.25rem; }
+    .sub { color: #718096; font-size: 0.82rem; margin-bottom: 1.5rem; }
+    .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1.5rem; }
+    .field { margin-bottom: 1rem; }
+    label { display: block; font-size: 0.8rem; font-weight: 600; color: #4a5568; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    input[type=text], input[type=date], select {
+      width: 100%; padding: 0.45rem 0.65rem; border: 1px solid #cbd5e0;
+      border-radius: 5px; font-size: 0.9rem; background: white;
+    }
+    input:focus, select:focus { outline: none; border-color: #3182ce; }
+    .hint { font-size: 0.75rem; color: #a0aec0; margin-top: 0.2rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 1.5rem; flex-wrap: wrap; }
+    .btn { padding: 0.5rem 1.25rem; border-radius: 5px; font-size: 0.9rem; font-weight: 600;
+           cursor: pointer; text-decoration: none; display: inline-block; border: none; }
+    .btn-primary  { background: #276749; color: white; }
+    .btn-secondary{ background: #edf2f7; color: #4a5568; }
+    .btn-danger   { background: white; color: #c53030; border: 1px solid #fc8181; }
+    .btn:hover { filter: brightness(0.93); }
+    .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030;
+             padding: 0.6rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.85rem; }
+    .sep { border: none; border-top: 1px dashed #e2e8f0; margin: 1.25rem 0; }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <h1>Editar Escala</h1>
+  <div class="sub">ID #{{.ID}} · todas as alterações são salvas imediatamente</div>
+
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+  <div class="card">
+    <form method="POST" action="/escalas/{{.ID}}/edit">
+
+      <div class="field">
+        <label>Terminal</label>
+        <input type="text" name="terminal" placeholder="Portonave, TCP, Braskarne..."
+               value="{{if .PC.Terminal}}{{derefStr .PC.Terminal}}{{end}}">
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Prev. Chegada (ETA)</label>
+          <input type="date" name="eta_date"
+                 value="{{if .PC.EtaDate.Valid}}{{.PC.EtaDate.Time.Format "2006-01-02"}}{{end}}">
+        </div>
+        <div class="field">
+          <label>Prev. Saída (ETD)</label>
+          <input type="date" name="etd_date"
+                 value="{{if .PC.EtdDate.Valid}}{{.PC.EtdDate.Time.Format "2006-01-02"}}{{end}}">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Atracação Efetiva</label>
+          <input type="date" name="actual_arrival"
+                 value="{{if .PC.ActualArrival.Valid}}{{.PC.ActualArrival.Time.Format "2006-01-02"}}{{end}}">
+          <p class="hint">Data real de atracação</p>
+        </div>
+        <div class="field">
+          <label>Suspensão Efetiva</label>
+          <input type="date" name="actual_departure"
+                 value="{{if .PC.ActualDeparture.Valid}}{{.PC.ActualDeparture.Time.Format "2006-01-02"}}{{end}}">
+          <p class="hint">Data real de desamarre</p>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Status</label>
+        <select name="port_call_status">
+          <option value="planned"   {{if eq .PC.PortCallStatus "planned"}}selected{{end}}>Planejada</option>
+          <option value="active"    {{if eq .PC.PortCallStatus "active"}}selected{{end}}>Atracado</option>
+          <option value="completed" {{if eq .PC.PortCallStatus "completed"}}selected{{end}}>Concluída</option>
+          <option value="aborted"   {{if eq .PC.PortCallStatus "aborted"}}selected{{end}}>Cancelada</option>
+        </select>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Salvar</button>
+        <a href="javascript:history.back()" class="btn btn-secondary">Cancelar</a>
+      </div>
+    </form>
+
+    <hr class="sep">
+
+    <form method="POST" action="/escalas/{{.ID}}/delete"
+          onsubmit="return confirm('Excluir esta escala permanentemente?\n\nNão é possível excluir se houver inspeção registrada.')">
+      <button type="submit" class="btn btn-danger">🗑 Excluir esta escala</button>
+    </form>
+  </div>
+</div>
+</body>
+</html>

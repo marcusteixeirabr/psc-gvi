@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Registrar Inspeção — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; }
+    .container { max-width: 520px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.3rem; color: #1a202c; margin-bottom: 0.3rem; }
+    .sub { font-size: 0.85rem; color: #718096; margin-bottom: 1.5rem; }
+    .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1.75rem; }
+    .field { margin-bottom: 1.1rem; }
+    label { display: block; font-size: 0.8rem; font-weight: 700; color: #4a5568;
+            margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .hint { font-size: 0.75rem; color: #718096; font-weight: 400; margin-left: 0.4rem;
+            text-transform: none; letter-spacing: 0; }
+    input, select, textarea { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #cbd5e0;
+      border-radius: 5px; font-size: 0.9rem; outline: none; transition: border-color 0.15s;
+      font-family: inherit; }
+    input:focus, select:focus, textarea:focus { border-color: #3182ce; }
+    textarea { resize: vertical; min-height: 80px; }
+    .info-box { background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 5px;
+                padding: 0.7rem 0.9rem; font-size: 0.82rem; color: #2c5282; margin-bottom: 1.25rem; }
+    .info-box strong { display: block; margin-bottom: 0.3rem; }
+    .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030;
+             border-radius: 5px; padding: 0.6rem 0.75rem; font-size: 0.875rem; margin-bottom: 1rem; }
+    .actions { display: flex; gap: 0.75rem; margin-top: 1.5rem; }
+    .btn { padding: 0.5rem 1.25rem; border-radius: 5px; font-size: 0.9rem; font-weight: 600;
+           cursor: pointer; text-decoration: none; border: none; }
+    .btn-primary { background: #276749; color: white; }
+    .btn-primary:hover { background: #22543d; }
+    .btn-secondary { background: #edf2f7; color: #4a5568; }
+    .btn-secondary:hover { background: #e2e8f0; }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <h1>Registrar Inspeção PSC</h1>
+  <div class="sub">{{.VesselName}}</div>
+
+  {{if .Error}}
+  <div class="error">{{.Error}}</div>
+  {{end}}
+
+  <div class="info-box">
+    <strong>Port Call</strong>
+    {{if .Terminal}}Terminal: <strong>{{.Terminal}}</strong> &nbsp;·&nbsp; {{end}}
+    {{if .ETADate}}Chegada: {{.ETADate}}{{end}}
+    {{if .ETDDate}} &nbsp;·&nbsp; Saída prev.: {{.ETDDate}}{{end}}
+  </div>
+
+  <form method="POST" action="/vessels/{{.VesselID}}/inspect">
+    <input type="hidden" name="port_call_id" value="{{.PortCallID}}">
+    <div class="card">
+
+      <div class="field">
+        <label>Data da Inspeção</label>
+        <input type="date" name="inspection_date" value="{{.DefaultDate}}" required>
+      </div>
+
+      <div class="field">
+        <label>Resultado</label>
+        <select name="result" required>
+          <option value="">— selecione —</option>
+          <option value="no_deficiencies">Sem Deficiências</option>
+          <option value="deficiencies">Com Deficiências (navio liberado)</option>
+          <option value="detained">Detido</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Notas <span class="hint">número do relatório, observações, etc.</span></label>
+        <textarea name="notes" placeholder="Opcional"></textarea>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">✓ Confirmar Inspeção</button>
+        <a href="/vessels/{{.VesselID}}" class="btn btn-secondary">Cancelar</a>
+      </div>
+    </div>
+  </form>
+</div>
+</body>
+</html>

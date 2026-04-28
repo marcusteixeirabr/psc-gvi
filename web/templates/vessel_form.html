@@ -14,7 +14,10 @@
     .full { grid-column: 1 / -1; }
     label { display: block; font-size: 0.8rem; font-weight: 700; color: #4a5568; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.04em; }
     .hint { font-size: 0.75rem; color: #718096; font-weight: 400; margin-left: 0.5rem; text-transform: none; letter-spacing: 0; }
-    input, select { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 0.9rem; outline: none; transition: border-color 0.15s; }
+    input[type="text"], input[type="number"], select {
+      width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #cbd5e0;
+      border-radius: 5px; font-size: 0.9rem; outline: none; transition: border-color 0.15s;
+    }
     input:focus, select:focus { border-color: #3182ce; }
     input[readonly] { background: #f7fafc; color: #718096; cursor: not-allowed; }
     .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; border-radius: 5px; padding: 0.6rem 0.75rem; font-size: 0.875rem; margin-bottom: 1rem; }
@@ -25,6 +28,17 @@
     .btn-secondary { background: #edf2f7; color: #4a5568; }
     .btn-secondary:hover { background: #e2e8f0; }
     .ciala-note { background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 5px; padding: 0.65rem 0.85rem; font-size: 0.8rem; color: #2c5282; margin-top: 1rem; }
+
+    /* Bloco de categoria */
+    .cat-box { border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.85rem 1rem; margin-top: 0.25rem; }
+    .cat-badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: 700; margin-bottom: 0.75rem; }
+    .cat-nacional  { background: #f0fff4; color: #276749; border: 1px solid #9ae6b4; }
+    .cat-estrangeiro { background: #ebf8ff; color: #2b6cb0; border: 1px solid #90cdf4; }
+    .radio-group { display: flex; flex-direction: column; gap: 0.4rem; }
+    .radio-group label { text-transform: none; font-weight: 500; font-size: 0.875rem; letter-spacing: 0;
+      display: flex; align-items: center; gap: 0.5rem; cursor: pointer; color: #2d3748; }
+    .radio-group input[type="radio"] { width: auto; }
+    .admin-sep { border-top: 1px dashed #e2e8f0; margin-top: 0.6rem; padding-top: 0.6rem; }
   </style>
 </head>
 <body>
@@ -36,19 +50,25 @@
   <div class="error">{{.Error}}</div>
   {{end}}
 
-  {{/* Se .Vessel existir → formulário de edição (POST para /vessels/:id) */}}
-  {{/* Se .Vessel for nil  → formulário de criação (POST para /vessels)    */}}
   <form method="POST" action="{{if .Vessel}}/vessels/{{.Vessel.ID}}{{else}}/vessels{{end}}">
+    {{/* acompanhado: enviado como hidden=true (default) e sobrescrito pelo checkbox nao_acompanhado */}}
+    <input type="hidden" name="acompanhado" value="true">
+
     <div class="card">
       <div class="grid">
 
+        {{/* IMO — obrigatório no cadastro manual, editável por admin e editor */}}
         <div class="full">
-          <label>IMO <span class="hint">identificador único mundial do navio</span></label>
+          <label>IMO
+            {{if not .Vessel}}
+              <span class="hint">obrigatório no cadastro manual</span>
+            {{else}}
+              <span class="hint">⚠ IMO é único — confirme antes de alterar; deixe vazio para manter o atual</span>
+            {{end}}
+          </label>
           <input type="text" name="imo" placeholder="IMO1234567"
             value="{{if .Vessel}}{{.Vessel.IMO}}{{end}}"
-            {{if .Vessel}}readonly{{end}}
-            required>
-          {{/* IMO é imutável — não pode ser editado após criação */}}
+            {{if not .Vessel}}required{{end}}>
         </div>
 
         <div class="full">
@@ -57,10 +77,31 @@
             value="{{if .Vessel}}{{.Vessel.Name}}{{end}}" required>
         </div>
 
-        <div>
-          <label>Bandeira</label>
+        {{/* Bandeira — define automaticamente se é nacional ou estrangeiro */}}
+        <div class="full">
+          <label>Bandeira <span class="hint">obrigatória no cadastro manual — "Brazil" ou "Brasil" → nacional</span></label>
           <input type="text" name="flag" placeholder="Panama"
-            value="{{if .Vessel}}{{.Vessel.Flag}}{{end}}">
+            value="{{if .Vessel}}{{.Vessel.Flag}}{{end}}"
+            {{if not .Vessel}}required{{end}}>
+        </div>
+
+        {{/* Classificação — dois checkboxes simples */}}
+        <div class="full">
+          <label>Classificação</label>
+          <div style="border:1px solid #e2e8f0;border-radius:6px;padding:0.85rem 1rem;margin-top:0.25rem;display:flex;flex-direction:column;gap:0.6rem">
+            <label style="display:flex;align-items:center;gap:0.5rem;font-weight:500;cursor:pointer">
+              <input type="checkbox" name="afretado" value="true"
+                     {{if and .Vessel .Vessel.Afretado}}checked{{end}}>
+              Afretado por empresa brasileira
+              <span class="hint">(bandeira estrangeira, mas trata como nacional — só relatório)</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:0.5rem;font-weight:500;cursor:pointer;color:#c53030">
+              <input type="checkbox" name="nao_acompanhado" value="true"
+                     {{if and .Vessel (eq .Vessel.Acompanhado false)}}checked{{end}}>
+              Não acompanhado
+              <span class="hint" style="color:#a0aec0">(Estado, Apoio, Rebocador, Pesquisa, Desativado — excluído de tudo)</span>
+            </label>
+          </div>
         </div>
 
         <div>
@@ -74,18 +115,17 @@
           <select name="vessel_type">
             <option value="">— selecione —</option>
             {{$vt := ""}}{{if .Vessel}}{{$vt = .Vessel.VesselType}}{{end}}
-            <option value="Bulk Carrier"       {{if eq $vt "Bulk Carrier"}}selected{{end}}>Bulk Carrier</option>
-            <option value="Container"          {{if eq $vt "Container"}}selected{{end}}>Container</option>
-            <option value="General Cargo"      {{if eq $vt "General Cargo"}}selected{{end}}>General Cargo</option>
-            <option value="Tanker"             {{if eq $vt "Tanker"}}selected{{end}}>Tanker</option>
-            <option value="Chemical Tanker"    {{if eq $vt "Chemical Tanker"}}selected{{end}}>Chemical Tanker</option>
-            <option value="Ro-Ro"              {{if eq $vt "Ro-Ro"}}selected{{end}}>Ro-Ro</option>
-            <option value="Passenger"          {{if eq $vt "Passenger"}}selected{{end}}>Passenger</option>
+            <option value="Bulk Carrier"    {{if eq $vt "Bulk Carrier"}}selected{{end}}>Bulk Carrier</option>
+            <option value="Container"       {{if eq $vt "Container"}}selected{{end}}>Container</option>
+            <option value="General Cargo"   {{if eq $vt "General Cargo"}}selected{{end}}>General Cargo</option>
+            <option value="Tanker"          {{if eq $vt "Tanker"}}selected{{end}}>Tanker</option>
+            <option value="Chemical Tanker" {{if eq $vt "Chemical Tanker"}}selected{{end}}>Chemical Tanker</option>
+            <option value="Ro-Ro"           {{if eq $vt "Ro-Ro"}}selected{{end}}>Ro-Ro</option>
+            <option value="Passenger"       {{if eq $vt "Passenger"}}selected{{end}}>Passenger</option>
             <option value="Offshore"           {{if eq $vt "Offshore"}}selected{{end}}>Offshore</option>
+            <option value="Refrigerated Cargo" {{if eq $vt "Refrigerated Cargo"}}selected{{end}}>Refrigerated Cargo</option>
           </select>
         </div>
-
-        <div></div>
 
         <div>
           <label>Comprimento (m)</label>
@@ -102,18 +142,35 @@
       </div>
 
       <div class="ciala-note">
-        ⚓ <strong>Risco e última inspeção</strong> são obtidos automaticamente via CIALA
-        após o IMO ser registrado. Não é necessário preencher aqui.
+        ⚓ <strong>Risco e última inspeção</strong> são preenchidos via CIALA.
+        {{if and .Vessel .Vessel.IMO (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
+          <a href="/vessels/{{.Vessel.ID}}" style="margin-left:0.5rem;color:#2b6cb0;font-weight:600">
+            Ver navio →
+          </a>
+          (o botão "Consultar CIALA" está na página do navio)
+        {{end}}
       </div>
 
       <div class="actions">
         <button type="submit" class="btn btn-primary">
           {{if .Vessel}}Salvar Alterações{{else}}Cadastrar Navio{{end}}
         </button>
-        <a href="/vessels" class="btn btn-secondary">Cancelar</a>
+        {{if and .Vessel .Vessel.IMO (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
+        <form method="POST" action="/vessels/{{.Vessel.ID}}/ciala" style="display:inline">
+          <button type="submit" class="btn" style="background:#276749;color:white"
+                  onclick="this.textContent='Consultando…';this.disabled=true;this.form.submit()">
+            🔍 Consultar CIALA
+          </button>
+        </form>
+        {{end}}
+        <a href="{{if .Vessel}}/vessels/{{.Vessel.ID}}{{else}}/vessels{{end}}" class="btn btn-secondary">Cancelar</a>
       </div>
     </div>
   </form>
 </div>
+
+<script>
+  // Nenhuma lógica de categoria necessária — derivada automaticamente da bandeira no backend.
+</script>
 </body>
 </html>

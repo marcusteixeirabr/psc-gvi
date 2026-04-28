@@ -19,9 +19,9 @@
     td { padding: 0.7rem 1rem; font-size: 0.875rem; color: #2d3748; border-top: 1px solid #e2e8f0; }
     tr:hover td { background: #f7fafc; }
     .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
-    .p0 { background: #e6fffa; color: #234e52; }
     .p1 { background: #fff5f5; color: #9b2c2c; }
     .p2 { background: #fffbeb; color: #744210; }
+    .p3 { background: #e6fffa; color: #234e52; }
     .pna { background: #e2e8f0; color: #4a5568; }
     .risk-high { color: #c53030; font-weight: 600; }
     .risk-standard { color: #744210; }
@@ -36,9 +36,19 @@
 <div class="container">
   <div class="toolbar">
     <h1>Navios Cadastrados</h1>
-    {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
-    <a href="/vessels/new" class="btn btn-primary">+ Novo Navio</a>
-    {{end}}
+    <div style="display:flex;gap:0.5rem;">
+      {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
+      <a href="/imo-search" class="btn btn-secondary">🔍 Buscar IMO</a>
+      {{if eq .User.Role "admin"}}
+        {{if .ShowAll}}
+        <a href="/vessels" class="btn btn-secondary" style="color:#c53030">Ocultar Desativados</a>
+        {{else}}
+        <a href="/vessels?all=1" class="btn btn-secondary">Ver Não Acompanhados</a>
+        {{end}}
+      {{end}}
+      <a href="/vessels/new" class="btn btn-primary">+ Novo Navio</a>
+      {{end}}
+    </div>
   </div>
 
   {{if .Flash}}
@@ -50,37 +60,36 @@
     <thead>
       <tr>
         <th>Nome</th>
-        <th>IMO</th>
         <th>Bandeira</th>
         <th>Tipo</th>
-        <th>Risco</th>
-        <th>Última Inspeção</th>
+        <th>Construção</th>
         <th>Prioridade</th>
+        <th>Última Inspeção</th>
       </tr>
     </thead>
     <tbody>
       {{range .Vessels}}
-      <tr>
-        <td><a href="/vessels/{{.ID}}" class="row-link">{{.Name}}</a></td>
-        <td>{{.IMO}}</td>
+      <tr {{if not .Acompanhado}}style="opacity:0.5"{{end}}>
+        <td>
+          <a href="/vessels/{{.ID}}" class="row-link">{{.Name}}</a>
+          {{if .IMO}}<br><span style="color:#a0aec0;font-size:0.78rem">{{.IMO}}</span>{{end}}
+        </td>
         <td>{{if .Flag}}{{.Flag}}{{else}}<span style="color:#a0aec0">—</span>{{end}}</td>
         <td>{{if .VesselType}}{{.VesselType}}{{else}}<span style="color:#a0aec0">—</span>{{end}}</td>
+        <td>{{if .YearBuilt}}{{.YearBuilt}}{{else}}<span style="color:#a0aec0">—</span>{{end}}</td>
         <td>
-          {{if .RiskLevel}}
-            {{if eq .RiskLevel "high"}}<span class="risk-high">Alto</span>
-            {{else if eq .RiskLevel "standard"}}<span class="risk-standard">Padrão</span>
-            {{else}}<span class="risk-low">Baixo</span>
-            {{end}}
-          {{else}}<span style="color:#a0aec0">—</span>{{end}}
-        </td>
-        <td>{{if .LastInspDate}}{{.LastInspDate}}{{else}}<span style="color:#a0aec0">Nunca</span>{{end}}</td>
-        <td>
-          {{if eq .Priority "P0"}}<span class="badge p0">P0</span>
-          {{else if eq .Priority "P1"}}<span class="badge p1">P1</span>
+          {{if eq .Priority "P1"}}<span class="badge p1">P1</span>
           {{else if eq .Priority "P2"}}<span class="badge p2">P2</span>
-          {{else}}<span class="badge pna">N/A</span>
-          {{end}}
+          {{else if eq .Priority "P3"}}<span class="badge p3">P3</span>
+          {{else}}<span class="badge pna">N/D</span>{{end}}
+          <br>
+          {{if eq .RiskLevel "high"}}<span class="risk-high" style="font-size:0.75rem">Alto</span>
+          {{else if eq .RiskLevel "standard"}}<span class="risk-standard" style="font-size:0.75rem">Padrão</span>
+          {{else if eq .RiskLevel "low"}}<span class="risk-low" style="font-size:0.75rem">Baixo</span>
+          {{else if eq .RiskLevel "not_found"}}<span style="color:#a0aec0;font-size:0.75rem">Sem reg.</span>
+          {{else}}<span style="color:#a0aec0;font-size:0.75rem">—</span>{{end}}
         </td>
+        <td>{{if .LastInspDate}}{{.LastInspDate}}{{else if .RiskLevel}}<span style="color:#a0aec0">N/D</span>{{else}}<span style="color:#a0aec0">—</span>{{end}}</td>
       </tr>
       {{end}}
     </tbody>

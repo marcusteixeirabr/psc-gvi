@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Busca de IMO — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; }
+    .container { max-width: 700px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.3rem; color: #1a202c; margin-bottom: 0.3rem; }
+    .sub { font-size: 0.85rem; color: #718096; margin-bottom: 1.5rem; }
+    .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1.5rem; }
+    .progress-bar-wrap { background: #e2e8f0; border-radius: 99px; height: 8px; margin: 1rem 0; }
+    .progress-bar { background: #3182ce; border-radius: 99px; height: 8px; width: 0%; transition: width 0.3s; }
+    .counter { font-size: 0.85rem; color: #718096; margin-bottom: 1rem; }
+    .log { max-height: 380px; overflow-y: auto; font-size: 0.82rem; font-family: monospace; }
+    .log-item { padding: 0.3rem 0; border-bottom: 1px solid #f0f4f8; display: flex; align-items: center; gap: 0.5rem; }
+    .log-item:last-child { border-bottom: none; }
+    .icon-search { color: #718096; }
+    .icon-found  { color: #276749; font-weight: 700; }
+    .icon-fail   { color: #c53030; }
+    .icon-done   { color: #2b6cb0; font-weight: 700; }
+    .actions { margin-top: 1.25rem; display: none; }
+    .btn { padding: 0.5rem 1.25rem; border-radius: 5px; font-size: 0.9rem; font-weight: 600;
+           cursor: pointer; text-decoration: none; display: inline-block;
+           background: #2b6cb0; color: white; border: none; }
+    .btn:hover { background: #2c5282; }
+    #status-msg { font-size: 0.9rem; color: #4a5568; margin-bottom: 0.75rem; }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <h1>Busca de IMO — VesselFinder</h1>
+  <div class="sub">
+    {{if .Total}}
+      {{.Total}} navio(s) sem IMO com port call ativo · aguarde (~2s por navio)
+    {{else}}
+      Todos os navios com port call ativo já têm IMO registrado.
+    {{end}}
+  </div>
+
+  <div class="card">
+    <div id="status-msg">Iniciando...</div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div class="counter" id="counter"></div>
+    <div class="log" id="log"></div>
+    <div class="actions" id="actions">
+      <a href="/vessels" class="btn">← Voltar para Navios</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  const total = {{.Total}};
+  let processed = 0;
+
+  function addLog(icon, cssClass, text) {
+    const log = document.getElementById('log');
+    const item = document.createElement('div');
+    item.className = 'log-item';
+    item.innerHTML = '<span class="' + cssClass + '">' + icon + '</span> ' + escapeHTML(text);
+    log.appendChild(item);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function escapeHTML(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function updateProgress() {
+    if (total > 0) {
+      const pct = Math.round((processed / total) * 100);
+      document.getElementById('progress-bar').style.width = pct + '%';
+      document.getElementById('counter').textContent = processed + ' / ' + total + ' processados';
+    }
+  }
+
+  {{if .Total}}
+  const evtSource = new EventSource('/imo-search/stream');
+
+  evtSource.addEventListener('start', function(e) {
+    document.getElementById('status-msg').textContent = 'Processando ' + e.data + ' navio(s)...';
+    updateProgress();
+  });
+
+  evtSource.addEventListener('searching', function(e) {
+    addLog('⌛', 'icon-search', 'Buscando: ' + e.data);
+  });
+
+  evtSource.addEventListener('found', function(e) {
+    const parts = e.data.split('|');
+    // Remove a linha "Buscando: X" anterior (última com icon-search)
+    const log = document.getElementById('log');
+    const items = log.querySelectorAll('.log-item');
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].querySelector('.icon-search')) { items[i].remove(); break; }
+    }
+    addLog('✓', 'icon-found', parts[0] + ' → IMO ' + (parts[1] || ''));
+    processed++;
+    updateProgress();
+  });
+
+  evtSource.addEventListener('fail', function(e) {
+    const parts = e.data.split('|');
+    const log = document.getElementById('log');
+    const items = log.querySelectorAll('.log-item');
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].querySelector('.icon-search')) { items[i].remove(); break; }
+    }
+    addLog('✗', 'icon-fail', parts[0] + (parts[1] ? ' — ' + parts[1] : ''));
+    processed++;
+    updateProgress();
+  });
+
+  evtSource.addEventListener('done', function(e) {
+    evtSource.close();
+    document.getElementById('status-msg').textContent = 'Concluído — ' + e.data;
+    document.getElementById('progress-bar').style.width = '100%';
+    document.getElementById('counter').textContent = processed + ' / ' + total + ' processados';
+    document.getElementById('actions').style.display = 'block';
+  });
+
+  evtSource.addEventListener('error', function(e) {
+    evtSource.close();
+    addLog('✗', 'icon-fail', 'Erro de conexão — ' + (e.data || 'verifique o servidor'));
+    document.getElementById('status-msg').textContent = 'Erro ao processar';
+    document.getElementById('actions').style.display = 'block';
+  });
+  {{else}}
+  document.getElementById('status-msg').textContent = 'Nada a fazer.';
+  document.getElementById('progress-bar').style.width = '100%';
+  document.getElementById('actions').style.display = 'block';
+  {{end}}
+</script>
+</body>
+</html>

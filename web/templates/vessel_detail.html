@@ -24,20 +24,29 @@
     dl dd { font-size: 0.95rem; color: #2d3748; margin-top: 0.15rem; }
     .empty { color: #a0aec0; font-style: italic; }
     .priority-card { border-radius: 8px; padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
-    .priority-p0 { background: #e6fffa; border: 1px solid #81e6d9; }
     .priority-p1 { background: #fff5f5; border: 1px solid #feb2b2; }
     .priority-p2 { background: #fffbeb; border: 1px solid #f6e05e; }
+    .priority-p3 { background: #e6fffa; border: 1px solid #81e6d9; }
     .priority-na { background: #e2e8f0; border: 1px solid #cbd5e0; }
     .priority-label { font-size: 1rem; font-weight: 700; }
-    .priority-p0 .priority-label { color: #234e52; }
     .priority-p1 .priority-label { color: #9b2c2c; }
     .priority-p2 .priority-label { color: #744210; }
+    .priority-p3 .priority-label { color: #234e52; }
     .priority-na .priority-label { color: #4a5568; }
     .priority-sub { font-size: 0.8rem; margin-top: 0.2rem; }
-    .priority-p0 .priority-sub { color: #285e61; }
     .priority-p1 .priority-sub { color: #c53030; }
     .priority-p2 .priority-sub { color: #975a16; }
+    .priority-p3 .priority-sub { color: #285e61; }
     .priority-na .priority-sub { color: #718096; }
+    .flash-ok    { background: #c6f6d5; border: 1px solid #9ae6b4; color: #276749; border-radius: 6px; padding: 0.65rem 1rem; font-size: 0.875rem; margin-bottom: 1rem; }
+    .flash-error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; border-radius: 6px; padding: 0.65rem 1rem; font-size: 0.875rem; margin-bottom: 1rem; }
+    .badge { display: inline-block; padding: 0.2rem 0.55rem; border-radius: 4px; font-size: 0.8rem; font-weight: 700; }
+    .cat-mercante    { background: #ebf8ff; color: #2b6cb0; }
+    .cat-nacional    { background: #f0fff4; color: #276749; }
+    .cat-afretado    { background: #fefcbf; color: #744210; }
+    .cat-estado      { background: #fff5f5; color: #c53030; }
+    .cat-apoio       { background: #e2e8f0; color: #4a5568; }
+    .cat-desativado  { background: #fed7d7; color: #9b2c2c; }
   </style>
 </head>
 <body>
@@ -46,24 +55,54 @@
   <div class="header">
     <div>
       <h1>{{.Vessel.Name}}</h1>
-      <div class="imo">IMO: {{.Vessel.IMO}}</div>
+      <div class="imo">
+        {{if .Vessel.IMO}}
+          IMO: {{.Vessel.IMO}}
+        {{else}}
+          <span style="color:#a0aec0">IMO pendente</span>
+          {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
+          &nbsp;
+          <form method="POST" action="/vessels/{{.Vessel.ID}}/find-imo" style="display:inline">
+            <button type="submit" style="background:none;border:none;color:#3182ce;cursor:pointer;font-size:0.8rem;padding:0;text-decoration:underline"
+                    onclick="this.textContent='Buscando…';this.disabled=true;this.form.submit()">
+              Buscar no VesselFinder
+            </button>
+          </form>
+          {{end}}
+        {{end}}
+        &nbsp;·&nbsp;
+        <span class="badge" style="{{if not .Vessel.Acompanhado}}background:#fff5f5;color:#c53030{{else if .Vessel.Afretado}}background:#fefcbf;color:#744210{{else if .Vessel.IsBrazilian}}background:#f0fff4;color:#276749{{else}}background:#ebf8ff;color:#2b6cb0{{end}}">
+          {{.Vessel.Classification}}
+        </span>
+      </div>
     </div>
     <div class="actions">
       {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
       <a href="/vessels/{{.Vessel.ID}}/edit" class="btn btn-secondary">Editar</a>
       {{end}}
       {{if eq .User.Role "admin"}}
+      {{if .Vessel.Acompanhado}}
       <form method="POST" action="/vessels/{{.Vessel.ID}}/deactivate"
-            onsubmit="return confirm('Desativar este navio?')">
-        <button type="submit" class="btn btn-danger">Desativar</button>
+            onsubmit="return confirm('Marcar como Não Acompanhado? O navio ficará oculto mas preservará o histórico.')">
+        <button type="submit" class="btn btn-danger">Não Acompanhar</button>
       </form>
+      {{end}}
+      {{if .Vessel.Acompanhado}}
+      <form method="POST" action="/vessels/{{.Vessel.ID}}/delete"
+            onsubmit="return confirm('DELETAR permanentemente? Esta ação não pode ser desfeita.\n\nSó é possível se o navio não tiver port calls registrados.')">
+        <button type="submit" class="btn btn-danger" style="background:#742a2a;border-color:#c53030;">Deletar</button>
+      </form>
+      {{end}}
       {{end}}
       <a href="/vessels" class="btn btn-secondary">← Voltar</a>
     </div>
   </div>
 
-  {{/* Bloco de prioridade CIALA — destaque visual */}}
-  <div class="priority-card priority-{{if eq .Vessel.Priority "P0"}}p0{{else if eq .Vessel.Priority "P1"}}p1{{else if eq .Vessel.Priority "P2"}}p2{{else}}na{{end}}">
+  {{if .Flash}}<div class="flash-ok">{{.Flash}}</div>{{end}}
+  {{if .FlashError}}<div class="flash-error">{{.FlashError}}</div>{{end}}
+
+  {{/* Bloco de prioridade CIALA */}}
+  <div class="priority-card priority-{{if eq .Vessel.Priority "P1"}}p1{{else if eq .Vessel.Priority "P2"}}p2{{else if eq .Vessel.Priority "P3"}}p3{{else}}na{{end}}">
     <div class="priority-label">Prioridade de Inspeção: {{.Vessel.Priority}}</div>
     <div class="priority-sub">{{.Vessel.PriorityLabel}}</div>
   </div>
@@ -94,26 +133,162 @@
     </div>
   </div>
 
+  {{if .ActivePortCall}}
+  <div class="card" style="{{if .ActivePortCall.Inspected}}border-left:4px solid #38a169{{else}}border-left:4px solid #3182ce{{end}}">
+    <h2>Port Call Ativo</h2>
+    <div class="grid" style="margin-bottom:0.75rem">
+      {{if .ActivePortCall.Terminal}}
+      <dl><dt>Terminal</dt><dd>{{.ActivePortCall.Terminal}}</dd></dl>
+      {{end}}
+      <dl><dt>Status</dt><dd>{{.ActivePortCall.StatusLabel}}</dd></dl>
+      {{if .ActivePortCall.ETADate}}
+      <dl><dt>Chegada Prev.</dt><dd>{{.ActivePortCall.ETADate}} {{.ActivePortCall.ETATime}}</dd></dl>
+      {{end}}
+      {{if .ActivePortCall.ETDDate}}
+      <dl><dt>Saída Prev.</dt><dd>{{.ActivePortCall.ETDDate}} {{.ActivePortCall.ETDTime}}</dd></dl>
+      {{end}}
+    </div>
+
+    {{if .ActivePortCall.Inspected}}
+    <div style="background:#f0fff4;border:1px solid #9ae6b4;border-radius:5px;padding:0.6rem 0.85rem;font-size:0.85rem;color:#276749">
+      ✓ Inspecionado em <strong>{{.ActivePortCall.InspectionDate}}</strong>
+      — {{.ActivePortCall.InspectionResult}}
+    </div>
+    {{else if or (eq .User.Role "admin") (eq .User.Role "editor")}}
+    <a href="/vessels/{{.Vessel.ID}}/inspect" class="btn btn-primary"
+       style="display:inline-block;padding:0.45rem 1rem;font-size:0.875rem;background:#276749;color:white;border-radius:5px;text-decoration:none;font-weight:600">
+      ✓ Registrar Inspeção
+    </a>
+    {{end}}
+  </div>
+  {{end}}
+
   <div class="card">
     <h2>Dados CIALA</h2>
     <div class="grid">
       <dl>
         <dt>Nível de Risco</dt>
         <dd>
-          {{if .Vessel.RiskLevel}}
-            {{if eq .Vessel.RiskLevel "high"}}Alto (>20 anos)
-            {{else if eq .Vessel.RiskLevel "standard"}}Padrão (10–20 anos)
-            {{else}}Baixo (<10 anos)
-            {{end}}
-          {{else}}<span class="empty">Aguardando CIALA</span>{{end}}
+          {{if eq .Vessel.RiskLevel "high"}}<span style="color:#c53030;font-weight:600">Alto</span>
+          {{else if eq .Vessel.RiskLevel "standard"}}Padrão
+          {{else if eq .Vessel.RiskLevel "low"}}<span style="color:#276749">Baixo</span>
+          {{else if eq .Vessel.RiskLevel "not_found"}}<span class="empty">Sem cadastro no CIALA</span>
+          {{else}}<span class="empty">N/D — Aguardando CIALA</span>{{end}}
         </dd>
       </dl>
       <dl>
-        <dt>Última Inspeção</dt>
-        <dd>{{if .Vessel.LastInspDate}}{{.Vessel.LastInspDate}}{{else}}<span class="empty">Nunca inspecionado</span>{{end}}</dd>
+        <dt>Última Inspeção PSC (CIALA)</dt>
+        <dd>
+          {{if .Vessel.NeverInspected}}<span style="color:#c53030;font-weight:600">Sem inspeção prévia</span>
+          {{else if .Vessel.LastInspDate}}{{.Vessel.LastInspDate}}
+          {{else}}<span class="empty">N/D — Aguardando CIALA</span>{{end}}
+          {{if .Vessel.Deficiencies}}
+          <div style="margin-top:0.3rem;color:#c05621;font-size:0.85rem;font-weight:600">
+            ⚠ Deficiências: {{.Vessel.Deficiencies}}
+          </div>
+          {{end}}
+        </dd>
       </dl>
     </div>
+    {{if and .Vessel.IMO (or (eq .User.Role "admin") (eq .User.Role "editor"))}}
+    <div style="margin-top:1rem">
+      <form method="POST" action="/vessels/{{.Vessel.ID}}/ciala" style="display:inline">
+        <button type="submit"
+                style="background:#276749;color:white;border:none;padding:0.4rem 0.9rem;border-radius:5px;font-size:0.85rem;font-weight:600;cursor:pointer"
+                onclick="this.textContent='Consultando…';this.disabled=true;this.form.submit()">
+          🔍 Consultar CIALA
+        </button>
+      </form>
+    </div>
+    {{end}}
   </div>
+
+  {{/* Histórico de Escalas */}}
+  {{if .Escalas}}
+  <div class="card">
+    <h2>Escalas ({{len .Escalas}})</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-top:0.5rem">
+      <thead>
+        <tr style="background:#f7fafc">
+          <th style="padding:0.4rem 0.6rem;text-align:left;color:#4a5568;font-weight:600">Terminal</th>
+          <th style="padding:0.4rem 0.6rem;text-align:left;color:#4a5568;font-weight:600">Atracação</th>
+          <th style="padding:0.4rem 0.6rem;text-align:left;color:#4a5568;font-weight:600">Suspensão</th>
+          <th style="padding:0.4rem 0.6rem;text-align:left;color:#4a5568;font-weight:600">Status</th>
+          <th style="padding:0.4rem 0.6rem;text-align:left;color:#4a5568;font-weight:600">Prioridade</th>
+          <th style="padding:0.4rem 0.6rem;text-align:left;color:#4a5568;font-weight:600">Inspeção</th>
+          {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}<th></th>{{end}}
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Escalas}}
+        <tr style="border-top:1px solid #edf2f7">
+          <td style="padding:0.4rem 0.6rem">{{if .Terminal}}{{.Terminal}}{{else}}<span style="color:#a0aec0">—</span>{{end}}</td>
+          <td style="padding:0.4rem 0.6rem">
+            {{if .BerthingDate}}<strong>{{.BerthingDate}}</strong>{{else}}<span style="color:#a0aec0">{{.ETADate}}</span>{{end}}
+          </td>
+          <td style="padding:0.4rem 0.6rem">
+            {{if .DepartureDate}}<strong>{{.DepartureDate}}</strong>{{else}}<span style="color:#a0aec0">{{.ETDDate}}</span>{{end}}
+          </td>
+          <td style="padding:0.4rem 0.6rem">
+            <span style="font-size:0.75rem;padding:0.1rem 0.4rem;border-radius:99px;
+              {{if eq .Status "active"}}background:#f0fff4;color:#276749
+              {{else if eq .Status "completed"}}background:#e2e8f0;color:#4a5568
+              {{else if eq .Status "planned"}}background:#ebf8ff;color:#2b6cb0
+              {{else}}background:#fff5f5;color:#c53030{{end}}">
+              {{.StatusLabel}}
+            </span>
+          </td>
+          <td style="padding:0.4rem 0.6rem">
+            {{if eq .PrioritySnapshot "P1"}}<span style="color:#c53030;font-weight:700">P1</span>
+            {{else if eq .PrioritySnapshot "P2"}}<span style="color:#744210;font-weight:700">P2</span>
+            {{else if eq .PrioritySnapshot "P3"}}<span style="color:#4a5568">P3</span>
+            {{else if .PrioritySnapshot}}{{.PrioritySnapshot}}
+            {{else}}<span style="color:#a0aec0">—</span>{{end}}
+          </td>
+          <td style="padding:0.4rem 0.6rem">
+            {{if .Inspected}}<span style="color:#276749;font-weight:700">✓</span> {{.InspectionResult}}
+            {{else}}<span style="color:#a0aec0">—</span>{{end}}
+          </td>
+          {{if or (eq $.User.Role "admin") (eq $.User.Role "editor")}}
+          <td style="padding:0.4rem 0.6rem">
+            <a href="/escalas/{{.ID}}/edit"
+               style="font-size:0.72rem;color:#2b6cb0;text-decoration:none;border:1px solid #bee3f8;padding:0.15rem 0.4rem;border-radius:3px">
+              ✏ Editar
+            </a>
+          </td>
+          {{end}}
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+  {{if and (eq .User.Role "admin") .SameNameVessels}}
+  <div class="card" style="border: 1px solid #f6e05e; background: #fffff0;">
+    <h2 style="color:#744210;">Duplicata Detectada</h2>
+    <p style="font-size:0.875rem;color:#744210;margin-bottom:1rem;">
+      Existe(m) outro(s) navio(s) com o mesmo nome. Para resolver, selecione o navio
+      <strong>de destino</strong> abaixo: todos os port calls deste serão transferidos
+      para ele e este registro será deletado.
+    </p>
+    <form method="POST" action="/vessels/{{.Vessel.ID}}/merge"
+          onsubmit="return confirm('Mesclar navios?\n\nTodos os port calls deste navio serão transferidos para o selecionado e este será deletado.\n\nEsta ação não pode ser desfeita.')">
+      <select name="target_id" style="width:100%;padding:0.5rem;border:1px solid #f6e05e;border-radius:5px;margin-bottom:0.75rem;font-size:0.875rem;">
+        {{range .SameNameVessels}}
+        <option value="{{.ID}}">
+          {{.Name}}
+          {{if .LengthM}} — LOA {{.LengthM}}m{{end}}
+          {{if .BeamM}} × Boca {{.BeamM}}m{{end}}
+          {{if .IMO}} — IMO: {{.IMO}}{{end}}
+          (ID {{.ID}})
+        </option>
+        {{end}}
+      </select>
+      <button type="submit" class="btn btn-secondary">Mesclar com selecionado →</button>
+    </form>
+  </div>
+  {{end}}
+
 </div>
 </body>
 </html>

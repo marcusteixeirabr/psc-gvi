@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Escalas — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; color: #2d3748; font-size: 0.875rem; }
+    .container { max-width: 1300px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.3rem; margin-bottom: 0.25rem; }
+    .sub { color: #718096; font-size: 0.82rem; margin-bottom: 1.25rem; }
+
+    .filters { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; }
+    .filters select, .filters input { padding: 0.35rem 0.6rem; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 0.85rem; background: white; }
+    .filters button { padding: 0.35rem 0.9rem; background: #276749; color: white; border: none; border-radius: 5px; font-size: 0.85rem; cursor: pointer; font-weight: 600; }
+
+    .flash { background: #f0fff4; border: 1px solid #9ae6b4; color: #276749; padding: 0.6rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-weight: 600; }
+    .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030; padding: 0.6rem 1rem; border-radius: 5px; margin-bottom: 1rem; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); font-size: 0.82rem; }
+    th { background: #2d3748; color: white; padding: 0.6rem 0.75rem; text-align: left; font-weight: 600; white-space: nowrap; }
+    td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #edf2f7; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f7fafc; }
+
+    .vessel-link { color: #2b6cb0; text-decoration: none; font-weight: 600; }
+    .vessel-link:hover { text-decoration: underline; }
+    .dim { color: #a0aec0; }
+    .dim-sm { color: #a0aec0; font-size: 0.75rem; }
+
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 99px; font-size: 0.72rem; font-weight: 700; }
+    .st-planned  { background: #ebf8ff; color: #2b6cb0; }
+    .st-active   { background: #f0fff4; color: #276749; }
+    .st-completed{ background: #e2e8f0; color: #4a5568; }
+    .st-aborted  { background: #fff5f5; color: #c53030; }
+
+    .badge.p1 { background: #fed7d7; color: #c53030; }
+    .badge.p2 { background: #fefcbf; color: #744210; }
+    .badge.p3 { background: #e2e8f0; color: #4a5568; }
+    .badge.pnd{ background: #e2e8f0; color: #718096; }
+
+    .insp-ok { color: #276749; font-weight: 700; }
+    .def-warn { color: #c05621; font-size: 0.72rem; font-weight: 600; }
+
+    .empty { text-align: center; padding: 2rem; color: #718096; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.25rem">
+    <div>
+      <h1>Escalas</h1>
+      <div class="sub">Registro de atracações e partidas efetivas · base para o relatório mensal</div>
+    </div>
+    {{if .User}}{{if or (eq .User.Role "editor") (eq .User.Role "admin")}}
+    <a href="/escalas/new" style="padding:0.45rem 1rem;background:#276749;color:white;border-radius:5px;font-size:0.85rem;font-weight:600;text-decoration:none;white-space:nowrap">+ Nova Escala</a>
+    {{end}}{{end}}
+  </div>
+
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+  <form method="GET" action="/escalas" class="filters">
+    {{if .VesselID}}<input type="hidden" name="vessel_id" value="{{.VesselID}}">{{end}}
+    <select name="mes">
+      {{range .Months}}
+      <option value="{{.Value}}" {{if eq .Value $.MesSel}}selected{{end}}>{{.Label}}</option>
+      {{end}}
+    </select>
+    <select name="status">
+      <option value="" {{if eq $.StatusSel ""}}selected{{end}}>Todos os status</option>
+      <option value="planned"   {{if eq $.StatusSel "planned"}}selected{{end}}>Planejadas</option>
+      <option value="active"    {{if eq $.StatusSel "active"}}selected{{end}}>Atracados</option>
+      <option value="completed" {{if eq $.StatusSel "completed"}}selected{{end}}>Concluídas</option>
+    </select>
+    <button type="submit">Filtrar</button>
+    {{if .VesselID}}
+    <a href="/escalas?vessel_id={{.VesselID}}" style="color:#718096;font-size:0.82rem;margin-left:0.25rem">Limpar filtros</a>
+    <a href="/escalas" style="color:#718096;font-size:0.82rem;margin-left:0.5rem">← Todas as escalas</a>
+    {{else}}
+    <a href="/escalas" style="color:#718096;font-size:0.82rem;margin-left:0.25rem">Limpar</a>
+    {{end}}
+  </form>
+
+  {{if .Entries}}
+  <table>
+    <thead>
+      <tr>
+        <th>Navio</th>
+        <th>Terminal</th>
+        <th>Prev. Chegada</th>
+        <th>Atracação</th>
+        <th>Prev. Saída</th>
+        <th>Partida</th>
+        <th>Status</th>
+        <th>Prioridade</th>
+        <th>Inspeção</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Entries}}
+      <tr>
+        <td>
+          <a href="/vessels/{{.VesselID}}" class="vessel-link">{{.VesselName}}</a>
+          {{if .VesselIMO}}<br><span class="dim-sm">{{.VesselIMO}}</span>{{end}}
+          {{if .VesselFlag}}<br><span class="dim-sm">{{.VesselFlag}}</span>{{end}}
+        </td>
+        <td>{{if .Terminal}}{{.Terminal}}{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{if .ETADate}}{{.ETADate}}{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>
+          {{if .BerthingDate}}<strong>{{.BerthingDate}}</strong>
+          {{else}}<span class="dim">—</span>{{end}}
+        </td>
+        <td>{{if .ETDDate}}{{.ETDDate}}{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>
+          {{if .DepartureDate}}<strong>{{.DepartureDate}}</strong>
+          {{else}}<span class="dim">—</span>{{end}}
+        </td>
+        <td>
+          <span class="badge st-{{.Status}}">{{.StatusLabel}}</span>
+        </td>
+        <td>
+          {{if eq .Priority "P1"}}<span class="badge p1">P1</span>
+          {{else if eq .Priority "P2"}}<span class="badge p2">P2</span>
+          {{else if eq .Priority "P3"}}<span class="badge p3">P3</span>
+          {{else if .Priority}}<span class="badge pnd">{{.Priority}}</span>
+          {{else}}<span class="dim">—</span>{{end}}
+          {{if eq .RiskLevel "high"}}<br><span style="font-size:0.7rem;color:#c53030">Alto</span>
+          {{else if eq .RiskLevel "standard"}}<br><span style="font-size:0.7rem;color:#c05621">Padrão</span>
+          {{else if eq .RiskLevel "low"}}<br><span style="font-size:0.7rem;color:#276749">Baixo</span>
+          {{end}}
+        </td>
+        <td>
+          {{if .Inspected}}<span class="insp-ok">✓</span> <span class="dim-sm">{{.InspectionResult}}</span>
+          {{else}}<span class="dim">—</span>{{end}}
+        </td>
+        <td>
+          {{if or (eq $.User.Role "admin") (eq $.User.Role "editor")}}
+          <a href="/escalas/{{.ID}}/edit"
+             style="font-size:0.72rem;color:#2b6cb0;text-decoration:none;border:1px solid #bee3f8;padding:0.15rem 0.4rem;border-radius:3px">
+            ✏ Editar
+          </a>
+          {{else}}<span class="dim">—</span>{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">Nenhuma escala encontrada para o filtro selecionado.</div>
+  {{end}}
+</div>
+</body>
+</html>

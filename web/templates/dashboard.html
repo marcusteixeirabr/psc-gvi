@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; }
+    .container { max-width: 1280px; margin: 0 auto; padding: 1.5rem; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; }
+    h1 { font-size: 1.4rem; color: #1a202c; }
+    .sub { font-size: 0.82rem; color: #718096; margin-top: 0.15rem; }
+    .btn { padding: 0.45rem 1rem; border-radius: 5px; font-size: 0.875rem; font-weight: 600; cursor: pointer; text-decoration: none; border: none; }
+    .btn-secondary { background: #edf2f7; color: #4a5568; }
+    .btn-secondary:hover { background: #e2e8f0; }
+
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+    .stat { background: white; border-radius: 8px; padding: 1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,0.07); }
+    .stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: #718096; font-weight: 700; }
+    .stat-value { font-size: 1.9rem; font-weight: 700; color: #1a202c; margin-top: 0.15rem; }
+    .stat-window .stat-value { color: #c53030; }
+
+    .flash { background: #c6f6d5; border: 1px solid #9ae6b4; color: #276749; border-radius: 5px; padding: 0.6rem 1rem; font-size: 0.875rem; margin-bottom: 1rem; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); overflow: hidden; font-size: 0.835rem; }
+    th { background: #edf2f7; text-align: left; padding: 0.55rem 0.75rem; font-size: 0.72rem; color: #4a5568; text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap; }
+    td { padding: 0.6rem 0.75rem; color: #2d3748; border-top: 1px solid #e2e8f0; vertical-align: top; }
+    .row-p1 td { background: #fff5f5; }
+    .row-p2 td { background: #fffbeb; }
+    .row-incomplete td { background: #fefcbf; }
+    tr:hover td { filter: brightness(0.97); }
+
+    .badge { display: inline-block; padding: 0.18rem 0.5rem; border-radius: 4px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+    .p1  { background: #fff5f5; color: #9b2c2c; border: 1px solid #fc8181; }
+    .p2  { background: #fffbeb; color: #744210; border: 1px solid #f6e05e; }
+    .p3  { background: #e6fffa; color: #234e52; }
+    .pna { background: #e2e8f0; color: #4a5568; }
+    .warn { background: #fefcbf; color: #744210; border: 1px dashed #d69e2e; }
+
+    .risk-high { color: #c53030; font-weight: 700; }
+    .risk-std  { color: #744210; }
+    .risk-low  { color: #276749; }
+
+    .age-old { color: #c53030; font-weight: 700; }
+    .age-ok  { color: #4a5568; }
+
+    .berthed { color: #276749; font-weight: 600; }
+    .acaminho { color: #718096; }
+
+    .dim { color: #a0aec0; font-size: 0.78rem; }
+    .tbc { color: #a0aec0; font-style: italic; }
+    .empty { text-align: center; padding: 3rem; color: #718096; }
+    a.vessel-link { color: #2b6cb0; text-decoration: none; font-weight: 600; }
+    a.vessel-link:hover { text-decoration: underline; }
+
+    .date-block { line-height: 1.4; }
+    .date-main  { font-weight: 600; }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <div class="toolbar">
+    <div>
+      <h1>Dashboard — Manobras Previstas</h1>
+      <div class="sub">Navios mercantes estrangeiros com port call ativo · ordenados por data</div>
+    </div>
+    {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
+    <form method="POST" action="/scrape/zp21">
+      <button type="submit" class="btn btn-secondary"
+              onclick="this.disabled=true;this.textContent='Buscando…';this.form.submit()">
+        ↻ Atualizar ZP-21
+      </button>
+    </form>
+    {{end}}
+  </div>
+
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-label">Navios Previstos</div>
+      <div class="stat-value">{{.Total}}</div>
+    </div>
+    <div class="stat stat-window">
+      <div class="stat-label">Na Janela (P1 + P2)</div>
+      <div class="stat-value">{{.InWindow}}</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Fora da Janela / Aguardando CIALA</div>
+      <div class="stat-value">{{sub .Total .InWindow}}</div>
+    </div>
+  </div>
+
+  {{if .Entries}}
+  <table>
+    <thead>
+      <tr>
+        <th>Chegada</th>
+        <th>Saída</th>
+        <th>Navio</th>
+        <th>Idade</th>
+        <th>Prioridade</th>
+        <th>Terminal</th>
+        <th>Inspeção</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Entries}}
+      <tr class="{{if eq .Priority "P1"}}row-p1{{else if eq .Priority "P2"}}row-p2{{end}}">
+
+        {{/* Chegada (ETA) */}}
+        <td>
+          {{if .ETADate}}
+          <div class="date-block">
+            <div class="date-main">{{.ETADate}}</div>
+            {{if .ETATime}}<div class="dim">{{.ETATime}}</div>
+            {{else}}<div class="tbc">TBC</div>{{end}}
+          </div>
+          {{else}}<span class="dim">—</span>{{end}}
+        </td>
+
+        {{/* Saída (ETD) */}}
+        <td>
+          {{if .ETDDate}}
+          <div class="date-block">
+            <div class="date-main">{{.ETDDate}}</div>
+            {{if .ETDTime}}<div class="dim">{{.ETDTime}}</div>
+            {{else}}<div class="tbc">TBC</div>{{end}}
+          </div>
+          {{else}}<span class="dim">—</span>{{end}}
+        </td>
+
+        {{/* Navio */}}
+        <td>
+          <a href="/vessels/{{.VesselID}}" class="vessel-link">{{.Name}}</a>
+          {{if .IMO}}<br><span class="dim">{{.IMO}}</span>{{end}}
+          {{if .Incomplete}}<br><span class="badge warn">⚠ Cadastro Incompleto</span>{{end}}
+        </td>
+
+        {{/* Idade */}}
+        <td>
+          {{if .Age}}
+          <span class="{{if .AgeOld}}age-old{{else}}age-ok{{end}}">{{.Age}}</span>
+          {{else}}<span class="dim">—</span>{{end}}
+        </td>
+
+        {{/* Prioridade + Risco */}}
+        <td>
+          {{if eq .Priority "P1"}}<span class="badge p1">P1</span>
+          {{else if eq .Priority "P2"}}<span class="badge p2">P2</span>
+          {{else if eq .Priority "P3"}}<span class="badge p3">P3</span>
+          {{else}}<span class="badge pna">N/D</span>{{end}}
+          <div style="margin-top:0.15rem;font-size:0.73rem">
+            {{if eq .RiskLevel "high"}}<span class="risk-high">Alto</span>
+            {{else if eq .RiskLevel "standard"}}<span class="risk-std">Padrão</span>
+            {{else if eq .RiskLevel "low"}}<span class="risk-low">Baixo</span>
+            {{else if eq .RiskLevel "not_found"}}<span class="dim">Sem reg.</span>
+            {{else}}<span class="dim">—</span>{{end}}
+          </div>
+        </td>
+
+        {{/* Terminal (cima) + Status (baixo) */}}
+        <td>
+          <div>{{if .Terminal}}{{.Terminal}}{{else}}<span class="dim">—</span>{{end}}</div>
+          <div style="margin-top:0.15rem;font-size:0.78rem">
+            {{if .IsBerthed}}<span class="berthed">● Atracado</span>
+            {{else}}<span class="acaminho">↗ A caminho</span>{{end}}
+          </div>
+        </td>
+
+        {{/* Inspeção GVI + deficiências CIALA */}}
+        <td>
+          {{if .Inspected}}
+          <span style="color:#276749;font-weight:700">✓</span>
+          <span class="dim" style="font-size:0.78rem">{{.InspectionResult}}</span>
+          {{else}}<span class="dim">—</span>{{end}}
+          {{if .Deficiencies}}
+          <div style="margin-top:0.2rem;font-size:0.73rem;color:#c05621;font-weight:600"
+               title="Deficiências da última inspeção PSC (CIALA)">
+            ⚠ {{.Deficiencies}}
+          </div>
+          {{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">
+    Nenhum navio mercante com port call ativo.<br>
+    <small style="margin-top:0.5rem;display:block">Use "↻ Atualizar ZP-21" para buscar as manobras previstas.</small>
+  </div>
+  {{end}}
+</div>
+</body>
+</html>

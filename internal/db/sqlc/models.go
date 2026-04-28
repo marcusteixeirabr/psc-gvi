@@ -35,6 +35,8 @@ type PortCall struct {
 	Zp21Sourced       bool               `json:"zp21_sourced"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	Terminal          *string            `json:"terminal"`
+	LastZp21SeenAt    pgtype.Timestamptz `json:"last_zp21_seen_at"`
 }
 
 type User struct {
@@ -48,17 +50,19 @@ type User struct {
 }
 
 type Vessel struct {
-	ID                 int64              `json:"id"`
-	Imo                string             `json:"imo"`
-	Name               string             `json:"name"`
-	Flag               *string            `json:"flag"`
-	YearBuilt          *int32             `json:"year_built"`
-	VesselType         *string            `json:"vessel_type"`
-	LengthM            pgtype.Numeric     `json:"length_m"`
-	BeamM              pgtype.Numeric     `json:"beam_m"`
-	RiskLevel          *string            `json:"risk_level"`
-	LastInspectionDate pgtype.Date        `json:"last_inspection_date"`
-	Active             bool               `json:"active"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID                         int64              `json:"id"`
+	Imo                        *string            `json:"imo"`
+	Name                       string             `json:"name"`
+	Flag                       *string            `json:"flag"`
+	YearBuilt                  *int32             `json:"year_built"`
+	VesselType                 *string            `json:"vessel_type"`
+	LengthM                    pgtype.Numeric     `json:"length_m"`
+	BeamM                      pgtype.Numeric     `json:"beam_m"`
+	RiskLevel                  *string            `json:"risk_level"`
+	LastInspectionDate         pgtype.Date        `json:"last_inspection_date"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	LastInspectionDeficiencies *string            `json:"last_inspection_deficiencies"`
+	Afretado                   bool               `json:"afretado"`
+	Acompanhado                bool               `json:"acompanhado"`
 }

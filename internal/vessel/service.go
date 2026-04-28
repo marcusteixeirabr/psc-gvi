@@ -3,6 +3,7 @@ package vessel
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -13,43 +14,73 @@ import (
 type Priority string
 
 const (
-	P0      Priority = "P0" // dentro do prazo — sem prioridade
-	P1      Priority = "P1" // vencido — prioridade máxima
-	P2      Priority = "P2" // próximo do vencimento — atenção
-	PNone   Priority = "N/A" // risk_level ou data desconhecidos (aguarda CIALA)
+	P1    Priority = "P1"  // vencido — prioridade máxima
+	P2    Priority = "P2"  // próximo do vencimento — atenção
+	P3    Priority = "P3"  // dentro do prazo — sem urgência (fora da janela)
+	PNone Priority = "N/D" // sem dados do CIALA (aguarda consulta)
 )
 
 // VesselView é o modelo de apresentação de um navio para os templates HTML.
-// Converte os tipos pgtype (usados pelo banco) em strings limpas para a UI.
-// Os templates Go trabalham com este tipo, nunca com sqlc.Vessel diretamente.
 type VesselView struct {
-	ID          int64
-	IMO         string
-	Name        string
-	Flag        string
-	YearBuilt   string
-	VesselType  string
-	LengthM     string
-	BeamM       string
-	RiskLevel   string // "high" | "standard" | "low" | "" (desconhecido)
-	LastInspDate string
-	Priority    Priority
-	PriorityLabel string
-	Active      bool
+	ID             int64
+	IMO            string
+	Name           string
+	Flag           string
+	YearBuilt      string
+	VesselType     string
+	LengthM        string
+	BeamM          string
+	RiskLevel      string // "high" | "standard" | "low" | "not_found" | ""
+	LastInspDate   string // data formatada, "Sem inspeção prévia" ou ""
+	NeverInspected bool   // CIALA confirmou: nunca inspecionado no AVM
+	Deficiencies   string // texto de deficiências da última inspeção (CIALA)
+	Afretado       bool   // afretado por empresa brasileira → comporta como nacional
+	Acompanhado    bool   // false = não-acompanhado (estado, apoio, desativado...)
+	Priority       Priority
+	PriorityLabel  string
 }
+
+// Classification retorna a classificação derivada automaticamente.
+func (v VesselView) Classification() string {
+	if !v.Acompanhado {
+		return "Não acompanhado"
+	}
+	if v.Afretado {
+		return "Afretado"
+	}
+	if isBrazilianFlag(v.Flag) {
+		return "Nacional"
+	}
+	return "Estrangeiro"
+}
+
+// IsBrazilian retorna true se a bandeira for brasileira — chamável nos templates.
+func (v VesselView) IsBrazilian() bool {
+	return isBrazilianFlag(v.Flag)
+}
+
+// isBrazilianFlag retorna true para bandeiras brasileiras (case-insensitive).
+func isBrazilianFlag(flag string) bool {
+	f := strings.ToLower(strings.TrimSpace(flag))
+	return f == "brazil" || f == "brasil"
+}
+
 
 // ToView converte um sqlc.Vessel (tipos pgtype) em VesselView (strings simples).
 // É chamado após qualquer query que retorna um Vessel.
 func ToView(v sqlc.Vessel) VesselView {
 	vv := VesselView{
-		ID:     v.ID,
-		IMO:    v.Imo,
-		Name:   v.Name,
-		Active: v.Active,
+		ID:   v.ID,
+		Name: v.Name,
 	}
 
+	if v.Imo != nil {
+		vv.IMO = *v.Imo
+	}
+	vv.Afretado    = v.Afretado
+	vv.Acompanhado = v.Acompanhado
+
 	// Campos nullable: ponteiros Go (*string, *int32) ou pgtype.
-	// Verificamos se há valor antes de formatar.
 	if v.Flag != nil {
 		vv.Flag = *v.Flag
 	}
@@ -60,8 +91,7 @@ func ToView(v sqlc.Vessel) VesselView {
 		vv.VesselType = *v.VesselType
 	}
 
-	// pgtype.Numeric → string. Float64Value() converte para ponto flutuante.
-	// Suficientemente preciso para comprimento/boca de navio em metros.
+	// pgtype.Numeric → string.
 	if v.LengthM.Valid {
 		if f, err := v.LengthM.Float64Value(); err == nil && f.Valid {
 			vv.LengthM = fmt.Sprintf("%.1f", f.Float64)
@@ -79,9 +109,16 @@ func ToView(v sqlc.Vessel) VesselView {
 	}
 	if v.LastInspectionDate.Valid {
 		vv.LastInspDate = v.LastInspectionDate.Time.Format("02/01/2006")
+	} else if v.RiskLevel != nil && *v.RiskLevel != "not_found" {
+		vv.NeverInspected = true
+		vv.LastInspDate = "Sem inspeção prévia"
 	}
 
-	// Calcula prioridade de inspeção pela regra CIALA (equivalente ao Java CialaPolicy).
+	if v.LastInspectionDeficiencies != nil {
+		vv.Deficiencies = *v.LastInspectionDeficiencies
+	}
+
+	// Calcula prioridade de inspeção pela regra CIALA.
 	vv.Priority = calculatePriority(v.RiskLevel, v.LastInspectionDate)
 	vv.PriorityLabel = priorityLabel(vv.Priority)
 
@@ -98,15 +135,16 @@ func ToViews(vessels []sqlc.Vessel) []VesselView {
 }
 
 // calculatePriority implementa a política de prioridade de inspeção do CIALA.
-// Replicado do Java CialaPolicy — regra regulatória do Acordo de Viña del Mar.
-//
-// Lógica:
-//   - Nível desconhecido ou nunca inspecionado → P1 (prioridade máxima)
-//   - Depende do risk_level e de quantos meses passaram desde a última inspeção
+// P1 = inspeção vencida | P2 = próximo do vencimento | P3 = fora da janela | N/D = sem dados
 func calculatePriority(riskLevel *string, lastInsp pgtype.Date) Priority {
-	if riskLevel == nil || !lastInsp.Valid {
-		// Sem dados do CIALA → prioridade máxima por segurança.
-		return P1
+	if riskLevel == nil {
+		return PNone // Aguardando consulta ao CIALA.
+	}
+	if *riskLevel == "not_found" {
+		return PNone // Não registrado no CIALA — sem dados suficientes.
+	}
+	if !lastInsp.Valid {
+		return P1 // "Sin Inspección previa en AVM" — nunca inspecionado = vencido.
 	}
 
 	months := monthsSince(lastInsp.Time)
@@ -114,9 +152,8 @@ func calculatePriority(riskLevel *string, lastInsp pgtype.Date) Priority {
 	switch *riskLevel {
 	case "high":
 		// Alto risco: inspecionar a cada 2 meses.
-		// P0: 0–2m | P2: 3–4m | P1: >=5m
 		if months <= 2 {
-			return P0
+			return P3
 		} else if months <= 4 {
 			return P2
 		}
@@ -124,9 +161,8 @@ func calculatePriority(riskLevel *string, lastInsp pgtype.Date) Priority {
 
 	case "standard":
 		// Risco padrão: inspecionar a cada 5 meses.
-		// P0: 0–5m | P2: 6–8m | P1: >=9m
 		if months <= 5 {
-			return P0
+			return P3
 		} else if months <= 8 {
 			return P2
 		}
@@ -134,9 +170,8 @@ func calculatePriority(riskLevel *string, lastInsp pgtype.Date) Priority {
 
 	case "low":
 		// Baixo risco: inspecionar a cada 9 meses.
-		// P0: 0–9m | P2: 10–18m | P1: >=19m
 		if months <= 9 {
-			return P0
+			return P3
 		} else if months <= 18 {
 			return P2
 		}
@@ -146,27 +181,43 @@ func calculatePriority(riskLevel *string, lastInsp pgtype.Date) Priority {
 	return PNone
 }
 
-// monthsSince calcula quantos meses completos se passaram desde uma data.
+// monthsSince calcula quantos meses se passaram desde uma data.
+// Conta meses calendário e adiciona 1 se o dia do mês atual já ultrapassou
+// o dia da inspeção (para evitar subestimar quando a data parcial já passou).
 func monthsSince(t time.Time) int {
 	now := time.Now()
 	years := now.Year() - t.Year()
 	months := int(now.Month()) - int(t.Month())
-	return years*12 + months
+	total := years*12 + months
+	if now.Day() > t.Day() {
+		total++
+	}
+	return total
 }
 
 // priorityLabel retorna o texto para exibição na UI.
 func priorityLabel(p Priority) string {
 	switch p {
-	case P0:
-		return "Sem prioridade"
 	case P1:
 		return "Prioridade 1 — Inspecionar"
 	case P2:
 		return "Prioridade 2 — Atenção"
+	case P3:
+		return "Sem prioridade — Fora da janela"
 	case PNone:
-		return "Aguardando CIALA"
+		return "N/D — Aguardando CIALA"
 	}
 	return ""
+}
+
+// CalcPriority é a versão exportada de calculatePriority, para uso em outros pacotes.
+func CalcPriority(riskLevel *string, lastInsp pgtype.Date) Priority {
+	return calculatePriority(riskLevel, lastInsp)
+}
+
+// PriorityLabelFor é a versão exportada de priorityLabel.
+func PriorityLabelFor(p Priority) string {
+	return priorityLabel(p)
 }
 
 // parseNumeric converte uma string de formulário em pgtype.Numeric.
@@ -201,3 +252,4 @@ func parseOptionalInt32(s string) *int32 {
 	}
 	return &v
 }
+

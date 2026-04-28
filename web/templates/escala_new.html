@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nova Escala — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; color: #2d3748; }
+    .container { max-width: 600px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.2rem; margin-bottom: 0.25rem; }
+    .sub { color: #718096; font-size: 0.82rem; margin-bottom: 1.5rem; }
+    .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1.5rem; }
+    .field { margin-bottom: 1rem; }
+    label { display: block; font-size: 0.8rem; font-weight: 600; color: #4a5568; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    input[type=text], input[type=date], select {
+      width: 100%; padding: 0.45rem 0.65rem; border: 1px solid #cbd5e0;
+      border-radius: 5px; font-size: 0.9rem; background: white;
+    }
+    input:focus, select:focus { outline: none; border-color: #3182ce; }
+    input.invalid { border-color: #fc8181; background: #fff5f5; }
+    .hint { font-size: 0.75rem; color: #a0aec0; margin-top: 0.2rem; }
+    .warn { font-size: 0.75rem; color: #c53030; margin-top: 0.3rem; display: none; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .actions { display: flex; gap: 0.75rem; align-items: center; margin-top: 1.5rem; flex-wrap: wrap; }
+    .btn { padding: 0.5rem 1.25rem; border-radius: 5px; font-size: 0.9rem; font-weight: 600;
+           cursor: pointer; text-decoration: none; display: inline-block; border: none; }
+    .btn-primary  { background: #276749; color: white; }
+    .btn-secondary{ background: #edf2f7; color: #4a5568; }
+    .btn:hover { filter: brightness(0.93); }
+    .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030;
+             padding: 0.6rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.85rem; }
+    .info  { background: #ebf8ff; border: 1px solid #bee3f8; color: #2b6cb0;
+             padding: 0.6rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.82rem; }
+    .sep   { border: none; border-top: 1px dashed #e2e8f0; margin: 1.25rem 0; }
+    #departure-field { display: none; }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <h1>Nova Escala</h1>
+  <div class="sub">Criação manual · campos com * são obrigatórios</div>
+
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+  <div class="info">
+    Use este formulário para registrar escalas que não vieram da ZP-21 ou que precisam
+    ser criadas manualmente. O navio não pode ter outra escala ativa ou planejada.
+  </div>
+
+  <div class="card">
+    <form method="POST" action="/escalas/new" id="escala-form">
+
+      <div class="field">
+        <label>Navio *</label>
+        <select name="vessel_id" id="vessel-select" required>
+          <option value="">— selecione —</option>
+          <option value="__new__">＋ Cadastrar novo navio</option>
+          {{range .Vessels}}
+          <option value="{{.ID}}">
+            {{.Name}}{{if .Flag}} · {{.Flag}}{{end}}{{if not .Acompanhado}} (não controlado){{end}}
+          </option>
+          {{end}}
+        </select>
+        <p class="hint">Navios "(não controlado)" são de estado/apoio — sem inspeção PSC.</p>
+      </div>
+
+      <div class="field">
+        <label>Terminal</label>
+        <input type="text" name="terminal" placeholder="Portonave, TCP, Braskarne...">
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Prev. Chegada (ETA)</label>
+          <input type="date" name="eta_date">
+        </div>
+        <div class="field">
+          <label>Prev. Saída (ETD)</label>
+          <input type="date" name="etd_date">
+        </div>
+      </div>
+
+      <hr class="sep">
+
+      <div class="field">
+        <label>Data de Atracação</label>
+        <input type="date" name="actual_arrival" id="arrival-date">
+        <p class="hint">Preencha se o navio já atracou. A escala será criada como "Atracado".</p>
+      </div>
+
+      <div class="field" id="departure-field">
+        <label>Data de Partida</label>
+        <input type="date" name="actual_departure" id="departure-date">
+        <p class="warn" id="departure-warn">⚠ Data de partida anterior à data de atracação.</p>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Criar Escala</button>
+        <a href="/escalas" class="btn btn-secondary">Cancelar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const vesselSelect  = document.getElementById('vessel-select');
+  const arrivalInput  = document.getElementById('arrival-date');
+  const departureField= document.getElementById('departure-field');
+  const departureInput= document.getElementById('departure-date');
+  const departureWarn = document.getElementById('departure-warn');
+
+  // Redireciona para cadastro de navio ao selecionar "Cadastrar novo navio".
+  vesselSelect.addEventListener('change', function () {
+    if (this.value === '__new__') {
+      window.location.href = '/vessels/new';
+    }
+  });
+
+  // Mostra/oculta o campo de partida conforme a atracação.
+  arrivalInput.addEventListener('change', function () {
+    if (this.value) {
+      departureField.style.display = 'block';
+      validateDeparture();
+    } else {
+      departureField.style.display = 'none';
+      departureInput.value = '';
+      departureInput.classList.remove('invalid');
+      departureWarn.style.display = 'none';
+    }
+  });
+
+  // Valida que partida >= atracação.
+  departureInput.addEventListener('change', validateDeparture);
+
+  function validateDeparture() {
+    const arrival   = arrivalInput.value;
+    const departure = departureInput.value;
+    if (departure && arrival && departure < arrival) {
+      departureInput.classList.add('invalid');
+      departureWarn.style.display = 'block';
+    } else {
+      departureInput.classList.remove('invalid');
+      departureWarn.style.display = 'none';
+    }
+  }
+
+  // Bloqueia envio se a data de partida for inválida.
+  document.getElementById('escala-form').addEventListener('submit', function (e) {
+    const arrival   = arrivalInput.value;
+    const departure = departureInput.value;
+    if (departure && arrival && departure < arrival) {
+      e.preventDefault();
+      departureInput.classList.add('invalid');
+      departureWarn.style.display = 'block';
+      departureInput.focus();
+    }
+  });
+</script>
+</body>
+</html>

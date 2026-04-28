@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Relatório Mensal — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; color: #2d3748; font-size: 0.875rem; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.3rem; margin-bottom: 0.25rem; }
+    .sub { color: #718096; font-size: 0.82rem; margin-bottom: 1.25rem; }
+
+    /* Barra de filtro */
+    .toolbar { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1.25rem; flex-wrap: wrap; }
+    .toolbar select { padding: 0.35rem 0.6rem; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 0.85rem; background: white; }
+    .toolbar button { padding: 0.35rem 0.9rem; background: #276749; color: white; border: none; border-radius: 5px; font-size: 0.85rem; cursor: pointer; font-weight: 600; }
+    .btn-export { background: #2b6cb0 !important; margin-left: auto; }
+
+    /* Cards KPI */
+    .kpi-row { display: flex; gap: 1rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+    .kpi-card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1rem 1.25rem; flex: 1; min-width: 140px; }
+    .kpi-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #718096; margin-bottom: 0.3rem; }
+    .kpi-value { font-size: 1.6rem; font-weight: 700; color: #1a202c; line-height: 1; }
+    .kpi-sub   { font-size: 0.75rem; color: #718096; margin-top: 0.2rem; }
+    .kpi-good  .kpi-value { color: #276749; }
+    .kpi-warn  .kpi-value { color: #c05621; }
+    .kpi-bad   .kpi-value { color: #c53030; }
+
+    /* Tabela */
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px;
+            overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.08); font-size: 0.8rem; }
+    th { background: #2d3748; color: white; padding: 0.5rem 0.65rem; text-align: left; font-weight: 600; white-space: nowrap; }
+    td { padding: 0.45rem 0.65rem; border-bottom: 1px solid #edf2f7; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f7fafc; }
+
+    .vessel-link { color: #2b6cb0; text-decoration: none; font-weight: 600; }
+    .vessel-link:hover { text-decoration: underline; }
+    .dim { color: #a0aec0; }
+    .dim-sm { color: #a0aec0; font-size: 0.73rem; }
+
+    .badge { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 99px; font-size: 0.71rem; font-weight: 700; }
+    .st-planned   { background: #ebf8ff; color: #2b6cb0; }
+    .st-active    { background: #f0fff4; color: #276749; }
+    .st-completed { background: #e2e8f0; color: #4a5568; }
+    .st-aborted   { background: #fff5f5; color: #c53030; }
+
+    .badge.p1 { background: #fed7d7; color: #c53030; }
+    .badge.p2 { background: #fefcbf; color: #744210; }
+    .badge.p3 { background: #e2e8f0; color: #4a5568; }
+
+    .insp-ok  { color: #276749; font-weight: 700; }
+    .insp-no  { color: #a0aec0; }
+    .empty { text-align: center; padding: 2rem; color: #718096; background: white;
+             border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+    .error { background: #fff5f5; border: 1px solid #feb2b2; color: #c53030;
+             padding: 0.6rem 1rem; border-radius: 5px; margin-bottom: 1rem; }
+
+    /* Linha de brasileiro */
+    tr.br td { opacity: 0.65; }
+
+    @media print {
+      .toolbar, nav { display: none; }
+      body { background: white; }
+      table { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+  <h1>Relatório Mensal — {{.MesLabel}}</h1>
+  <div class="sub">Escalas que tocaram o porto no mês · navios acompanhados</div>
+
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+  <!-- Filtro de mês + exportar -->
+  <form method="GET" action="/relatorio" class="toolbar">
+    <select name="mes">
+      {{range .Months}}
+      <option value="{{.Value}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>
+      {{end}}
+    </select>
+    <button type="submit">Filtrar</button>
+    <a href="/relatorio/export?mes={{.MesSel}}"
+       class="btn-export"
+       style="padding:0.35rem 0.9rem;background:#2b6cb0;color:white;border-radius:5px;font-size:0.85rem;font-weight:600;text-decoration:none">
+      ⬇ Exportar CSV
+    </a>
+  </form>
+
+  <!-- Cards KPI (apenas estrangeiros acompanhados) -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-label">Escalas no mês</div>
+      <div class="kpi-value">{{.KPI.Total}}</div>
+      <div class="kpi-sub">estrangeiros acompanhados</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Concluídas</div>
+      <div class="kpi-value">{{.KPI.Completed}}</div>
+      <div class="kpi-sub">com atracação e suspensão</div>
+    </div>
+    <div class="kpi-card {{if ge .KPI.Percent 20.0}}kpi-good{{else if ge .KPI.Percent 10.0}}kpi-warn{{else}}kpi-bad{{end}}">
+      <div class="kpi-label">Inspecionados</div>
+      <div class="kpi-value">{{.KPI.Inspected}}</div>
+      <div class="kpi-sub">{{printf "%.1f" .KPI.Percent}}% · meta: ≥ 20%</div>
+    </div>
+  </div>
+
+  <!-- Tabela de escalas -->
+  {{if .Entries}}
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Navio</th>
+        <th>IMO</th>
+        <th>Bandeira</th>
+        <th>Tipo</th>
+        <th>Terminal</th>
+        <th>Atracação</th>
+        <th>Suspensão</th>
+        <th>Dias</th>
+        <th>Status</th>
+        <th>Prior.</th>
+        <th>Inspeção</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range $i, $e := .Entries}}
+      <tr {{if $e.IsBrazilian}}class="br"{{end}}>
+        <td class="dim">{{add1 $i}}</td>
+        <td>
+          <a href="/vessels/{{$e.VesselID}}" class="vessel-link">{{$e.VesselName}}</a>
+          {{if $e.IsBrazilian}}<span class="dim-sm">(BR)</span>{{end}}
+          {{if $e.IsAfretado}}<span class="dim-sm">(afret.)</span>{{end}}
+        </td>
+        <td>{{if $e.VesselIMO}}{{$e.VesselIMO}}{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{if $e.VesselFlag}}{{$e.VesselFlag}}{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{if $e.VesselType}}{{$e.VesselType}}{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{if $e.Terminal}}{{$e.Terminal}}{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{if $e.BerthingDate}}<strong>{{$e.BerthingDate}}</strong>{{else if $e.ETADate}}<span class="dim">{{$e.ETADate}}</span>{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{if $e.DepartureDate}}<strong>{{$e.DepartureDate}}</strong>{{else if $e.ETDDate}}<span class="dim">{{$e.ETDDate}}</span>{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{if eq $e.DaysInPort "—"}}<span class="dim">—</span>{{else}}{{$e.DaysInPort}}{{end}}</td>
+        <td><span class="badge st-{{$e.Status}}">{{$e.StatusLabel}}</span></td>
+        <td>
+          {{if eq $e.PrioritySnapshot "P1"}}<span class="badge p1">P1</span>
+          {{else if eq $e.PrioritySnapshot "P2"}}<span class="badge p2">P2</span>
+          {{else if eq $e.PrioritySnapshot "P3"}}<span class="badge p3">P3</span>
+          {{else}}<span class="dim">{{$e.PrioritySnapshot}}</span>{{end}}
+        </td>
+        <td>
+          {{if $e.Inspected}}
+            <span class="insp-ok">✓</span>
+            <span class="dim-sm">{{$e.InspectionResult}}</span>
+            {{if $e.InspectionDate}}<br><span class="dim-sm">{{$e.InspectionDate}}</span>{{end}}
+          {{else}}<span class="insp-no">—</span>{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <div class="empty">Nenhuma escala encontrada para {{.MesLabel}}.</div>
+  {{end}}
+</div>
+</body>
+</html>

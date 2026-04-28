@@ -90,9 +90,7 @@
       <tr>
         <th>Navio</th>
         <th>Terminal</th>
-        <th>Prev. Chegada</th>
         <th>Atracação</th>
-        <th>Prev. Saída</th>
         <th>Partida</th>
         <th>Status</th>
         <th>Prioridade</th>
@@ -109,12 +107,10 @@
           {{if .VesselFlag}}<br><span class="dim-sm">{{.VesselFlag}}</span>{{end}}
         </td>
         <td>{{if .Terminal}}{{.Terminal}}{{else}}<span class="dim">—</span>{{end}}</td>
-        <td>{{if .ETADate}}{{.ETADate}}{{else}}<span class="dim">—</span>{{end}}</td>
         <td>
           {{if .BerthingDate}}<strong>{{.BerthingDate}}</strong>
           {{else}}<span class="dim">—</span>{{end}}
         </td>
-        <td>{{if .ETDDate}}{{.ETDDate}}{{else}}<span class="dim">—</span>{{end}}</td>
         <td>
           {{if .DepartureDate}}<strong>{{.DepartureDate}}</strong>
           {{else}}<span class="dim">—</span>{{end}}

@@ -439,9 +439,7 @@ func toEscalaView(r sqlc.ListEscalasRow) EscalaView {
 	if r.VesselImo != nil {
 		v.VesselIMO = *r.VesselImo
 	}
-	if r.InspectionResult != nil {
-		v.InspectionResult = *r.InspectionResult
-	}
+	v.InspectionResult = inspectionResultLabel(r.InspectionResult)
 	if r.EtaDate.Valid {
 		v.ETADate = r.EtaDate.Time.Format("02/01/2006")
 	}
@@ -483,9 +481,7 @@ func toEscalaViewFromByVessel(r sqlc.ListEscalasByVesselRow) EscalaView {
 	if r.VesselImo != nil {
 		v.VesselIMO = *r.VesselImo
 	}
-	if r.InspectionResult != nil {
-		v.InspectionResult = *r.InspectionResult
-	}
+	v.InspectionResult = inspectionResultLabel(r.InspectionResult)
 	if r.EtaDate.Valid {
 		v.ETADate = r.EtaDate.Time.Format("02/01/2006")
 	}
@@ -508,6 +504,21 @@ func derefStr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func inspectionResultLabel(r *string) string {
+	if r == nil {
+		return ""
+	}
+	switch *r {
+	case "no_deficiencies":
+		return "Sem deficiências"
+	case "deficiencies":
+		return "Com deficiências"
+	case "detained":
+		return "Detido"
+	}
+	return *r
 }
 
 func escalaStatusLabel(s string) string {

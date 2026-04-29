@@ -686,6 +686,25 @@ func (q *Queries) RegisterDeparture(ctx context.Context, arg RegisterDeparturePa
 	return err
 }
 
+const updatePortCallSnapshot = `-- name: UpdatePortCallSnapshot :exec
+UPDATE port_calls
+SET risk_level_snapshot = $2,
+    priority_snapshot   = $3,
+    updated_at          = NOW()
+WHERE id = $1
+`
+
+type UpdatePortCallSnapshotParams struct {
+	ID                int64   `json:"id"`
+	RiskLevelSnapshot *string `json:"risk_level_snapshot"`
+	PrioritySnapshot  *string `json:"priority_snapshot"`
+}
+
+func (q *Queries) UpdatePortCallSnapshot(ctx context.Context, arg UpdatePortCallSnapshotParams) error {
+	_, err := q.db.Exec(ctx, updatePortCallSnapshot, arg.ID, arg.RiskLevelSnapshot, arg.PrioritySnapshot)
+	return err
+}
+
 const updateBerthingDate = `-- name: UpdateBerthingDate :exec
 UPDATE port_calls
 SET actual_arrival   = $2,
@@ -917,15 +936,24 @@ func (q *Queries) ListReportEntries(ctx context.Context, arg ListReportEntriesPa
 
 const countReportKPI = `-- name: CountReportKPI :one
 SELECT
-    COUNT(pc.id)                                              AS total,
-    COUNT(ins.id)                                             AS inspected,
-    COUNT(*) FILTER (WHERE pc.port_call_status = 'completed') AS completed
+    COUNT(pc.id) AS total_porto,
+    COUNT(pc.id) FILTER (
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+    ) AS estrangeiros,
+    COUNT(pc.id) FILTER (
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+          AND (pc.priority_snapshot IN ('P1','P2') OR ins.id IS NOT NULL)
+    ) AS sujeitos,
+    COUNT(ins.id) FILTER (
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+    ) AS inspected
 FROM port_calls pc
 JOIN vessels v ON v.id = pc.vessel_id
 LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 WHERE v.acompanhado = TRUE
-  AND v.afretado = FALSE
-  AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil', 'brasil'))
   AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = $1::int
   AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = $2::int
 `
@@ -936,15 +964,15 @@ type CountReportKPIParams struct {
 }
 
 type CountReportKPIRow struct {
-	Total     int64 `json:"total"`
-	Inspected int64 `json:"inspected"`
-	Completed int64 `json:"completed"`
+	TotalPorto   int64 `json:"total_porto"`
+	Estrangeiros int64 `json:"estrangeiros"`
+	Sujeitos     int64 `json:"sujeitos"`
+	Inspected    int64 `json:"inspected"`
 }
 
-// Calcula KPI do mês: total de escalas de estrangeiros acompanhados e quantas foram inspecionadas.
 func (q *Queries) CountReportKPI(ctx context.Context, arg CountReportKPIParams) (CountReportKPIRow, error) {
 	row := q.db.QueryRow(ctx, countReportKPI, arg.Year, arg.Month)
 	var i CountReportKPIRow
-	err := row.Scan(&i.Total, &i.Inspected, &i.Completed)
+	err := row.Scan(&i.TotalPorto, &i.Estrangeiros, &i.Sujeitos, &i.Inspected)
 	return i, err
 }

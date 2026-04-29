@@ -161,8 +161,8 @@ func (h *Handler) Index(c *gin.Context) {
 		Month: int32(now.Month()),
 	})
 	monthKPI := 0.0
-	if kpiRow.Total > 0 {
-		monthKPI = float64(kpiRow.Inspected) / float64(kpiRow.Total) * 100
+	if kpiRow.Sujeitos > 0 {
+		monthKPI = float64(kpiRow.Inspected) / float64(kpiRow.Sujeitos) * 100
 	}
 	monthColor := "red"
 	if monthKPI >= 20 {
@@ -178,7 +178,7 @@ func (h *Handler) Index(c *gin.Context) {
 		MonthLabel:     fmt.Sprintf("%s %d", ptMonthName(now.Month()), now.Year()),
 		MonthKPI:       monthKPI,
 		MonthColor:     monthColor,
-		MonthTotal:     kpiRow.Total,
+		MonthTotal:     kpiRow.Sujeitos,
 		MonthInspected: kpiRow.Inspected,
 	})
 }

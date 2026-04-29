@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/marcusteixeirabr/psc-gvi/internal/auth"
 	"github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
+	"github.com/marcusteixeirabr/psc-gvi/internal/vessel"
 )
 
 // Handler serve as rotas de inspeção.
@@ -107,6 +108,18 @@ func (h *Handler) Register(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
+
+	// Captura o snapshot ANTES de alterar last_inspection_date.
+	// A inspeção vai atualizar last_inspection_date → muda prioridade calculada.
+	// O snapshot deve refletir o estado que justificou a inspeção, não o estado pós-inspeção.
+	if v, err := h.q.GetVessel(ctx, vesselID); err == nil {
+		prio := string(vessel.CalcPriority(v.RiskLevel, v.LastInspectionDate))
+		_ = h.q.UpdatePortCallSnapshot(ctx, sqlc.UpdatePortCallSnapshotParams{
+			ID:                portCallID,
+			RiskLevelSnapshot: v.RiskLevel,
+			PrioritySnapshot:  &prio,
+		})
+	}
 
 	_, err = h.q.CreateInspection(ctx, sqlc.CreateInspectionParams{
 		PortCallID:     portCallID,

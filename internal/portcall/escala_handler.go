@@ -230,9 +230,16 @@ func (h *EscalaHandler) RegisterSuspension(c *gin.Context) {
 		return
 	}
 
-	// Calcula o snapshot no momento da partida.
-	riskSnap := escala.VesselRiskLevel
-	prioritySnap := string(vessel.CalcPriority(riskSnap, escala.VesselLastInspectionDate))
+	// Snapshot: se a inspeção já o capturou (estado pré-inspeção), preserva.
+	// Caso contrário calcula agora com os dados atuais do vessel.
+	riskSnap := escala.RiskLevelSnapshot
+	var prioritySnap string
+	if escala.PrioritySnapshot != nil {
+		prioritySnap = *escala.PrioritySnapshot
+	} else {
+		riskSnap = escala.VesselRiskLevel
+		prioritySnap = string(vessel.CalcPriority(riskSnap, escala.VesselLastInspectionDate))
+	}
 
 	if err := h.q.RegisterDeparture(c.Request.Context(), sqlc.RegisterDepartureParams{
 		ID:                  id,

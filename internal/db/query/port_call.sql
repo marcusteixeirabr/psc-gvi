@@ -160,6 +160,14 @@ SET actual_arrival   = $2,
     updated_at       = NOW()
 WHERE id = $1;
 
+-- name: UpdatePortCallSnapshot :exec
+-- Salva o snapshot de risco/prioridade no momento da inspeção (estado pré-inspeção).
+UPDATE port_calls
+SET risk_level_snapshot = $2,
+    priority_snapshot   = $3,
+    updated_at          = NOW()
+WHERE id = $1;
+
 -- name: RegisterDeparture :exec
 -- Registra a partida efetiva: data real de saída + snapshot + conclui a escala.
 UPDATE port_calls
@@ -290,17 +298,29 @@ WHERE v.acompanhado = TRUE
 ORDER BY COALESCE(pc.actual_arrival::date, pc.eta_date) ASC NULLS LAST, v.name ASC;
 
 -- name: CountReportKPI :one
--- Calcula KPI do mês: total de escalas de estrangeiros acompanhados e quantas foram inspecionadas.
--- Usado no card de resumo do relatório mensal.
+-- KPI do mês: totais para os cards do relatório.
+-- total_porto   = todos os navios acompanhados com escala no mês
+-- estrangeiros  = estrangeiros não-afretados
+-- sujeitos      = estrangeiros com P1/P2 no snapshot OU já inspecionados (base do %)
+-- inspected     = estrangeiros com inspeção registrada
 SELECT
-    COUNT(pc.id)                                              AS total,
-    COUNT(ins.id)                                             AS inspected,
-    COUNT(*) FILTER (WHERE pc.port_call_status = 'completed') AS completed
+    COUNT(pc.id) AS total_porto,
+    COUNT(pc.id) FILTER (
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+    ) AS estrangeiros,
+    COUNT(pc.id) FILTER (
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+          AND (pc.priority_snapshot IN ('P1','P2') OR ins.id IS NOT NULL)
+    ) AS sujeitos,
+    COUNT(ins.id) FILTER (
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+    ) AS inspected
 FROM port_calls pc
 JOIN vessels v ON v.id = pc.vessel_id
 LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 WHERE v.acompanhado = TRUE
-  AND v.afretado = FALSE
-  AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil', 'brasil'))
   AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(year)::int
   AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(month)::int;

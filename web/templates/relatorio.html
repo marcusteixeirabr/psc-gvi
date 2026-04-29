@@ -90,22 +90,32 @@
     </a>
   </form>
 
-  <!-- Cards KPI (apenas estrangeiros acompanhados) -->
+  <!-- Cards KPI -->
   <div class="kpi-row">
     <div class="kpi-card">
-      <div class="kpi-label">Escalas no mês</div>
-      <div class="kpi-value">{{.KPI.Total}}</div>
-      <div class="kpi-sub">estrangeiros acompanhados</div>
+      <div class="kpi-label">Total no porto</div>
+      <div class="kpi-value">{{.KPI.TotalPorto}}</div>
+      <div class="kpi-sub">navios acompanhados</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Concluídas</div>
-      <div class="kpi-value">{{.KPI.Completed}}</div>
-      <div class="kpi-sub">com atracação e suspensão</div>
+      <div class="kpi-label">Estrangeiros</div>
+      <div class="kpi-value">{{.KPI.Estrangeiros}}</div>
+      <div class="kpi-sub">não afretados</div>
     </div>
-    <div class="kpi-card {{if ge .KPI.Percent 20.0}}kpi-good{{else if ge .KPI.Percent 10.0}}kpi-warn{{else}}kpi-bad{{end}}">
+    <div class="kpi-card">
+      <div class="kpi-label">Sujeitos à inspeção</div>
+      <div class="kpi-value">{{.KPI.Sujeitos}}</div>
+      <div class="kpi-sub">P1 + P2 + inspecionados</div>
+    </div>
+    <div class="kpi-card">
       <div class="kpi-label">Inspecionados</div>
       <div class="kpi-value">{{.KPI.Inspected}}</div>
-      <div class="kpi-sub">{{printf "%.1f" .KPI.Percent}}% · meta: ≥ 20%</div>
+      <div class="kpi-sub">com registro de inspeção</div>
+    </div>
+    <div class="kpi-card {{if ge .KPI.Percent 20.0}}kpi-good{{else if ge .KPI.Percent 10.0}}kpi-warn{{else}}kpi-bad{{end}}">
+      <div class="kpi-label">% Inspecionados</div>
+      <div class="kpi-value">{{printf "%.1f" .KPI.Percent}}%</div>
+      <div class="kpi-sub">meta: ≥ 20%</div>
     </div>
   </div>
 
@@ -118,12 +128,8 @@
         <th>Navio</th>
         <th>IMO</th>
         <th>Bandeira</th>
-        <th>Tipo</th>
-        <th>Terminal</th>
         <th>Atracação</th>
-        <th>Suspensão</th>
-        <th>Dias</th>
-        <th>Status</th>
+        <th>Risco</th>
         <th>Prior.</th>
         <th>Inspeção</th>
       </tr>
@@ -139,12 +145,13 @@
         </td>
         <td>{{if $e.VesselIMO}}{{$e.VesselIMO}}{{else}}<span class="dim">—</span>{{end}}</td>
         <td>{{if $e.VesselFlag}}{{$e.VesselFlag}}{{else}}<span class="dim">—</span>{{end}}</td>
-        <td>{{if $e.VesselType}}{{$e.VesselType}}{{else}}<span class="dim">—</span>{{end}}</td>
-        <td>{{if $e.Terminal}}{{$e.Terminal}}{{else}}<span class="dim">—</span>{{end}}</td>
-        <td>{{if $e.BerthingDate}}<strong>{{$e.BerthingDate}}</strong>{{else if $e.ETADate}}<span class="dim">{{$e.ETADate}}</span>{{else}}<span class="dim">—</span>{{end}}</td>
-        <td>{{if $e.DepartureDate}}<strong>{{$e.DepartureDate}}</strong>{{else if $e.ETDDate}}<span class="dim">{{$e.ETDDate}}</span>{{else}}<span class="dim">—</span>{{end}}</td>
-        <td>{{if eq $e.DaysInPort "—"}}<span class="dim">—</span>{{else}}{{$e.DaysInPort}}{{end}}</td>
-        <td><span class="badge st-{{$e.Status}}">{{$e.StatusLabel}}</span></td>
+        <td>{{if $e.BerthingDate}}<strong>{{$e.BerthingDate}}</strong>{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>
+          {{if eq $e.RiskSnapshot "Alto"}}<span style="color:#c53030;font-weight:600">Alto</span>
+          {{else if eq $e.RiskSnapshot "Padrão"}}<span style="color:#c05621">Padrão</span>
+          {{else if eq $e.RiskSnapshot "Baixo"}}<span style="color:#276749">Baixo</span>
+          {{else}}<span class="dim">—</span>{{end}}
+        </td>
         <td>
           {{if eq $e.PrioritySnapshot "P1"}}<span class="badge p1">P1</span>
           {{else if eq $e.PrioritySnapshot "P2"}}<span class="badge p2">P2</span>

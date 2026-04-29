@@ -125,10 +125,10 @@
     <thead>
       <tr>
         <th>#</th>
+        <th>Atracação</th>
         <th>Navio</th>
         <th>IMO</th>
         <th>Bandeira</th>
-        <th>Atracação</th>
         <th>Risco</th>
         <th>Prior.</th>
         <th>Inspeção</th>
@@ -138,6 +138,7 @@
       {{range $i, $e := .Entries}}
       <tr {{if $e.IsBrazilian}}class="br"{{end}}>
         <td class="dim">{{add1 $i}}</td>
+        <td>{{if $e.BerthingDate}}<strong>{{$e.BerthingDate}}</strong>{{else}}<span class="dim">—</span>{{end}}</td>
         <td>
           <a href="/vessels/{{$e.VesselID}}" class="vessel-link">{{$e.VesselName}}</a>
           {{if $e.IsBrazilian}}<span class="dim-sm">(BR)</span>{{end}}
@@ -145,7 +146,6 @@
         </td>
         <td>{{if $e.VesselIMO}}{{$e.VesselIMO}}{{else}}<span class="dim">—</span>{{end}}</td>
         <td>{{if $e.VesselFlag}}{{$e.VesselFlag}}{{else}}<span class="dim">—</span>{{end}}</td>
-        <td>{{if $e.BerthingDate}}<strong>{{$e.BerthingDate}}</strong>{{else}}<span class="dim">—</span>{{end}}</td>
         <td>
           {{if eq $e.RiskSnapshot "Alto"}}<span style="color:#c53030;font-weight:600">Alto</span>
           {{else if eq $e.RiskSnapshot "Padrão"}}<span style="color:#c05621">Padrão</span>

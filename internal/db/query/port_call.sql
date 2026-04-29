@@ -265,37 +265,57 @@ SET actual_departure    = NULL,
 WHERE id = $1;
 
 -- name: ListReportEntries :many
--- Retorna escalas que tocaram o porto no mês selecionado, para o relatório mensal.
--- "Tocou o porto" = actual_arrival, actual_departure ou eta_date caiu no mês.
--- Filtra apenas navios acompanhados (excluindo apoio/estado).
--- Ordenado por data efetiva de atracação (ou eta como fallback).
-SELECT
-    pc.id,
-    pc.vessel_id,
-    pc.terminal,
-    pc.eta_date,
-    pc.etd_date,
-    pc.actual_arrival,
-    pc.actual_departure,
-    pc.port_call_status,
-    pc.risk_level_snapshot,
-    pc.priority_snapshot,
-    v.name        AS vessel_name,
-    v.imo         AS vessel_imo,
-    v.flag        AS vessel_flag,
-    v.afretado    AS vessel_afretado,
-    v.year_built  AS vessel_year_built,
-    v.vessel_type AS vessel_type,
-    ins.id        AS inspection_id,
-    ins.result    AS inspection_result,
-    ins.inspection_date
-FROM port_calls pc
-JOIN vessels v ON v.id = pc.vessel_id
-LEFT JOIN inspections ins ON ins.port_call_id = pc.id
-WHERE v.acompanhado = TRUE
-  AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(year)::int
-  AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(month)::int
-ORDER BY COALESCE(pc.actual_arrival::date, pc.eta_date) ASC NULLS LAST, v.name ASC;
+-- Uma linha por navio (última escala do período).
+-- Estrangeiros não-afretados primeiro, ordenados pela primeira atracação do navio no período.
+-- Afretados e nacionais sempre por último.
+WITH period_vessels AS (
+    SELECT pc.id, pc.vessel_id,
+           COALESCE(pc.actual_arrival::date, pc.eta_date) AS arrival_date
+    FROM port_calls pc
+    JOIN vessels v ON v.id = pc.vessel_id
+    WHERE v.acompanhado = TRUE
+      AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(year)::int
+      AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(month)::int
+),
+vessel_first_arrival AS (
+    SELECT vessel_id, MIN(arrival_date) AS first_arrival
+    FROM period_vessels GROUP BY vessel_id
+),
+ranked AS (
+    SELECT
+        pc.id, pc.vessel_id, pc.terminal,
+        pc.eta_date, pc.etd_date,
+        pc.actual_arrival, pc.actual_departure,
+        pc.port_call_status, pc.risk_level_snapshot, pc.priority_snapshot,
+        v.name AS vessel_name, v.imo AS vessel_imo, v.flag AS vessel_flag,
+        v.afretado AS vessel_afretado, v.year_built AS vessel_year_built,
+        v.vessel_type AS vessel_type,
+        ins.id AS inspection_id, ins.result AS inspection_result, ins.inspection_date,
+        vfa.first_arrival,
+        ROW_NUMBER() OVER (
+            PARTITION BY pc.vessel_id
+            ORDER BY COALESCE(pc.actual_arrival, pc.eta_date::timestamptz) DESC NULLS LAST
+        ) AS rn
+    FROM period_vessels pv
+    JOIN port_calls pc ON pc.id = pv.id
+    JOIN vessels v ON v.id = pc.vessel_id
+    JOIN vessel_first_arrival vfa ON vfa.vessel_id = pc.vessel_id
+    LEFT JOIN inspections ins ON ins.port_call_id = pc.id
+)
+SELECT id, vessel_id, terminal, eta_date, etd_date,
+       actual_arrival, actual_departure, port_call_status,
+       risk_level_snapshot, priority_snapshot,
+       vessel_name, vessel_imo, vessel_flag, vessel_afretado,
+       vessel_year_built, vessel_type,
+       inspection_id, inspection_result, inspection_date
+FROM ranked
+WHERE rn = 1
+ORDER BY
+    CASE WHEN vessel_afretado = FALSE
+              AND (vessel_flag IS NULL OR LOWER(TRIM(vessel_flag)) NOT IN ('brazil','brasil'))
+         THEN 0 ELSE 1 END ASC,
+    first_arrival ASC NULLS LAST,
+    vessel_name ASC;
 
 -- name: CountReportKPI :one
 -- KPI do mês: totais para os cards do relatório.

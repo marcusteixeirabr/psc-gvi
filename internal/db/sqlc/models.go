@@ -49,6 +49,19 @@ type User struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
+type ScraperRun struct {
+	ID             int64              `json:"id"`
+	Scraper        string             `json:"scraper"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	DurationMs     int32              `json:"duration_ms"`
+	Status         string             `json:"status"`
+	RowsFound      int32              `json:"rows_found"`
+	ItemsProcessed int32              `json:"items_processed"`
+	ItemsFailed    int32              `json:"items_failed"`
+	ErrorMessage   *string            `json:"error_message"`
+}
+
 type Vessel struct {
 	ID                         int64              `json:"id"`
 	Imo                        *string            `json:"imo"`
@@ -65,4 +78,5 @@ type Vessel struct {
 	LastInspectionDeficiencies *string            `json:"last_inspection_deficiencies"`
 	Afretado                   bool               `json:"afretado"`
 	Acompanhado                bool               `json:"acompanhado"`
+	LastCialaCheckedAt         pgtype.Timestamptz `json:"last_ciala_checked_at"`
 }

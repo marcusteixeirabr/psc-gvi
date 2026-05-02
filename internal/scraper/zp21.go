@@ -27,6 +27,7 @@ type ManobrasRow struct {
 	RawDate      string // data no formato original do site (ex: "26/04/2026")
 	RawTime      string // hora no formato original; pode ser "TBC" ou similar
 	ManeuverType string // "entrada" | "saida" | texto original se não reconhecido
+	Situation    string // situação do navio normalizada (ex: "atracado", "fundeado", "navegando")
 }
 
 // FetchManobras busca e retorna as linhas da tabela "Manobras Previstas" do ZP-21.
@@ -115,13 +116,14 @@ func extractCells(tr *goquery.Selection) []string {
 // Usa normalização de texto para lidar com variações de acentuação e capitalização.
 func detectColumns(headers []string) map[string]int {
 	cols := map[string]int{
-		"name":     -1,
-		"loa":      -1,
-		"beam":     -1,
-		"terminal": -1,
-		"date":     -1,
-		"time":     -1,
-		"maneuver": -1,
+		"name":      -1,
+		"loa":       -1,
+		"beam":      -1,
+		"terminal":  -1,
+		"date":      -1,
+		"time":      -1,
+		"maneuver":  -1,
+		"situation": -1,
 	}
 	for i, h := range headers {
 		n := norm(h)
@@ -140,6 +142,8 @@ func detectColumns(headers []string) map[string]int {
 			cols["time"] = i
 		case has(n, "manobra", "operac", "tipo", "movimento", "mov."):
 			cols["maneuver"] = i
+		case has(n, "situac", "situação", "estado", "condicao"):
+			cols["situation"] = i
 		}
 	}
 	return cols
@@ -155,7 +159,9 @@ func parseRow(cells []string, cols map[string]int) *ManobrasRow {
 		return strings.TrimSpace(cells[idx])
 	}
 
-	name := strings.ToUpper(strings.TrimSpace(get("name")))
+	// Remove acentos antes de armazenar: ZP-21 envia nomes com diacríticos
+	// (ex: "LOG-IN JATOBÁ"), mas buscas externas como VesselFinder não os aceitam.
+	name := strings.ToUpper(StripAccents(strings.TrimSpace(get("name"))))
 	if name == "" {
 		return nil
 	}
@@ -178,6 +184,7 @@ func parseRow(cells []string, cols map[string]int) *ManobrasRow {
 		RawDate:      get("date"),
 		RawTime:      rawTime,
 		ManeuverType: classifyManeuver(maneuverRaw),
+		Situation:    norm(get("situation")), // normalizado: minúsculas, sem acentos
 	}
 }
 
@@ -238,15 +245,24 @@ func parseDecimal(s string) float64 {
 	return v
 }
 
-// norm converte para minúsculas e remove diacríticos para comparação fuzzy.
-func norm(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
+// StripAccents remove diacríticos de uma string preservando o case original.
+// Usada para normalizar nomes de navios antes de pesquisas externas (ex: VesselFinder)
+// que não aceitam caracteres acentuados.
+func StripAccents(s string) string {
 	r := strings.NewReplacer(
+		"Ç", "C", "Ã", "A", "Á", "A", "Â", "A", "À", "A",
+		"É", "E", "Ê", "E", "Í", "I", "Ó", "O", "Ô", "O",
+		"Õ", "O", "Ú", "U", "Ü", "U",
 		"ç", "c", "ã", "a", "á", "a", "â", "a", "à", "a",
 		"é", "e", "ê", "e", "í", "i", "ó", "o", "ô", "o",
 		"õ", "o", "ú", "u", "ü", "u",
 	)
 	return r.Replace(s)
+}
+
+// norm converte para minúsculas e remove diacríticos para comparação fuzzy.
+func norm(s string) string {
+	return StripAccents(strings.ToLower(strings.TrimSpace(s)))
 }
 
 // has reporta se s contém algum dos substrings.

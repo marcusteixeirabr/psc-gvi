@@ -52,6 +52,28 @@ WHERE zp21_sourced = TRUE
   AND port_call_status = 'planned'
   AND (last_zp21_seen_at IS NULL OR last_zp21_seen_at < $1);
 
+-- name: GetStaleBerthedPortCalls :many
+-- Retorna escalas ativas+atracadas que sumiram do ZP-21 E têm outro navio confirmado
+-- no mesmo terminal (R5). Essa combinação prova que o berço foi liberado pelo navio original.
+-- Escalas sem terminal ou sem outro navio no mesmo terminal permanecem atracadas (R4).
+SELECT pc.id, pc.vessel_id,
+       v.name AS vessel_name,
+       v.risk_level, v.last_inspection_date
+FROM port_calls pc
+JOIN vessels v ON v.id = pc.vessel_id
+WHERE pc.zp21_sourced = TRUE
+  AND pc.port_call_status = 'active'
+  AND pc.vessel_status = 'berthed'
+  AND (pc.last_zp21_seen_at IS NULL OR pc.last_zp21_seen_at < $1)
+  AND pc.terminal IS NOT NULL
+  AND EXISTS (
+      SELECT 1 FROM port_calls pc2
+      WHERE pc2.id != pc.id
+        AND pc2.vessel_status = 'berthed'
+        AND pc2.port_call_status = 'active'
+        AND pc2.terminal = pc.terminal
+  );
+
 -- name: UpdatePortCallETA :exec
 -- Atualiza a previsão de chegada e o terminal a partir de uma linha de entrada do ZP-21.
 -- COALESCE mantém o terminal existente se o novo for NULL.
@@ -344,3 +366,42 @@ LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 WHERE v.acompanhado = TRUE
   AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(year)::int
   AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(month)::int;
+
+-- name: CountEscalas :one
+-- Conta escalas com os mesmos filtros de ListEscalas — usado para paginação.
+SELECT COUNT(*)::int
+FROM port_calls pc
+JOIN vessels v ON v.id = pc.vessel_id
+WHERE ($1::text = '' OR pc.port_call_status = $1::text)
+  AND ($2::bigint = 0 OR pc.vessel_id = $2::bigint)
+  AND ($3::int = 0
+       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $3::int)
+  AND ($4::int = 0
+       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $4::int);
+
+-- name: ListEscalasPaged :many
+-- Lista escalas com paginação (LIMIT 50 OFFSET $5). NÃO modifica ListEscalas.
+SELECT
+    pc.id, pc.vessel_id, pc.terminal,
+    pc.eta_date, pc.etd_date,
+    pc.actual_arrival, pc.actual_departure,
+    pc.vessel_status, pc.port_call_status,
+    pc.risk_level_snapshot, pc.priority_snapshot,
+    v.name AS vessel_name, v.imo AS vessel_imo,
+    v.flag AS vessel_flag, v.afretado AS vessel_afretado, v.acompanhado AS vessel_acompanhado,
+    v.risk_level AS vessel_risk_level,
+    v.last_inspection_date AS vessel_last_inspection_date,
+    ins.id     AS inspection_id,
+    ins.result AS inspection_result
+FROM port_calls pc
+JOIN vessels v ON v.id = pc.vessel_id
+LEFT JOIN inspections ins ON ins.port_call_id = pc.id
+WHERE ($1::text = '' OR pc.port_call_status = $1::text)
+  AND ($2::bigint = 0 OR pc.vessel_id = $2::bigint)
+  AND ($3::int = 0
+       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $3::int)
+  AND ($4::int = 0
+       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $4::int)
+ORDER BY COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date) ASC NULLS LAST,
+         pc.created_at ASC
+LIMIT 50 OFFSET $5;

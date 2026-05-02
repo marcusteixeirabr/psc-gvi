@@ -42,6 +42,13 @@ type Config struct {
 	CIALAURL      string
 	CIALAUsername string
 	CIALAPassword string
+
+	// SMTP — alertas por e-mail (todos opcionais; se vazios, alertas desativados).
+	SMTPHost     string
+	SMTPPort     string
+	SMTPUser     string
+	SMTPPassword string
+	AlertEmail   string
 }
 
 // DSN retorna a string de conexão no formato que o pgx espera.
@@ -83,6 +90,11 @@ func Load() (Config, error) {
 		CIALAURL:         getEnv("CIALA_URL", "https://ciala.acuerdolatinoamericano.org"),
 		CIALAUsername:    getEnv("CIALA_USERNAME", ""),
 		CIALAPassword:    getEnv("CIALA_PASSWORD", ""),
+		SMTPHost:         getEnv("SMTP_HOST", ""),
+		SMTPPort:         getEnv("SMTP_PORT", "587"),
+		SMTPUser:         getEnv("SMTP_USER", ""),
+		SMTPPassword:     getEnv("SMTP_PASSWORD", ""),
+		AlertEmail:       getEnv("ALERT_EMAIL", ""),
 	}
 
 	if cfg.DBPassword == "" {

@@ -117,3 +117,42 @@ RETURNING *;
 UPDATE vessels
 SET acompanhado = FALSE, updated_at = NOW()
 WHERE id = $1;
+
+-- name: ListVesselsForAutoCIALA :many
+-- Navios acompanhados com IMO e escala ativa cuja consulta CIALA está desatualizada.
+-- Condição: last_ciala_checked_at IS NULL (nunca consultado) OU anterior à criação
+-- da escala ativa mais recente (nova visita = nova consulta obrigatória).
+SELECT DISTINCT ON (v.id) v.*
+FROM vessels v
+JOIN port_calls pc ON pc.vessel_id = v.id
+WHERE v.imo IS NOT NULL
+  AND v.acompanhado = TRUE
+  AND (pc.port_call_status = 'planned' OR pc.port_call_status = 'active')
+  AND (v.last_ciala_checked_at IS NULL OR v.last_ciala_checked_at < pc.created_at)
+ORDER BY v.id, pc.created_at DESC;
+
+-- name: UpdateVesselLastCIALACheck :exec
+-- Registra o timestamp da última consulta CIALA bem-sucedida para o navio.
+UPDATE vessels
+SET last_ciala_checked_at = NOW(), updated_at = NOW()
+WHERE id = $1;
+
+-- name: CountVessels :one
+-- Conta navios acompanhados para paginação.
+SELECT COUNT(*)::int FROM vessels WHERE acompanhado = TRUE;
+
+-- name: CountAllVessels :one
+-- Conta todos os navios (admin: inclui não-acompanhados).
+SELECT COUNT(*)::int FROM vessels;
+
+-- name: ListVesselsPaged :many
+-- Lista navios acompanhados com paginação.
+SELECT * FROM vessels WHERE acompanhado = TRUE ORDER BY name LIMIT 50 OFFSET $1;
+
+-- name: SearchVessels :many
+-- Busca navios por nome (parcial, case-insensitive) ou IMO (exato).
+SELECT * FROM vessels
+WHERE acompanhado = TRUE
+  AND (name ILIKE $1 OR imo = $2)
+ORDER BY name
+LIMIT 20;

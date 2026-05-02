@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
 	"github.com/marcusteixeirabr/psc-gvi/internal/scraper"
+	"github.com/marcusteixeirabr/psc-gvi/internal/vessel"
 )
 
 // ScrapeResult resume o resultado de um ciclo de scraping ZP-21.
@@ -51,12 +52,28 @@ func ProcessManobras(ctx context.Context, q *sqlc.Queries, rows []scraper.Manobr
 		}
 	}
 
-	// Cancela automaticamente escalas ZP-21 planejadas que não apareceram neste ciclo.
-	// Condição: zp21_sourced=TRUE + status=planned + last_zp21_seen_at < scrapeTime.
 	var scrapeTS pgtype.Timestamptz
 	_ = scrapeTS.Scan(scrapeTime)
+
+	// Cancela escalas ZP-21 planejadas que não apareceram neste ciclo (status → aborted).
 	if err := q.AbortStaleZP21PortCalls(ctx, scrapeTS); err != nil {
 		log.Printf("[portcall] AbortStaleZP21PortCalls falhou: %v", err)
+	}
+
+	// R5: conclui escalas ativas+atracadas que sumiram do ZP-21 E têm outro navio
+	// confirmado no mesmo terminal — evidência direta de que o berço foi liberado.
+	// Escalas sem terminal ou sem outro navio no berço permanecem atracadas (R4).
+	staleBerthed, err := q.GetStaleBerthedPortCalls(ctx, scrapeTS)
+	if err != nil {
+		log.Printf("[portcall] GetStaleBerthedPortCalls falhou: %v", err)
+	} else {
+		for _, row := range staleBerthed {
+			if err := autoCompleteDeparture(ctx, q, row.ID, row.RiskLevel, row.LastInspectionDate); err != nil {
+				log.Printf("[portcall] R5: auto-conclusão falhou para %q: %v", row.VesselName, err)
+			} else {
+				log.Printf("[portcall] R5: %q suspendeu (sumiu do ZP-21, terminal ocupado por outro navio)", row.VesselName)
+			}
+		}
 	}
 
 	return result
@@ -123,42 +140,29 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("buscando port call ativo: %w", err)
 		}
+		// Nenhum port call ativo — cria novo.
+		return createPortCallEntry(ctx, q, v, entrada, saida, result, scrapeTime)
+	}
 
-		// Nenhum port call ativo — cria um novo com todos os dados disponíveis.
-		initialStatus := "navigating"
-		if entrada == nil && saida != nil {
-			// Apenas saída: o navio já está atracado.
-			initialStatus = "berthed"
-		}
-
-		newPC, err := q.CreatePortCall(ctx, sqlc.CreatePortCallParams{
-			VesselID:       v.ID,
-			Terminal:       optStr(terminalOf(entrada, saida)),
-			VesselStatus:   initialStatus,
-			PortCallStatus: "planned",
-			EtaDate:        parsePgDate(strIf(entrada, func(r *scraper.ManobrasRow) string { return r.RawDate })),
-			EtaTime:        parsePgTime(strIf(entrada, func(r *scraper.ManobrasRow) string { return r.RawTime })),
-			EtdDate:        parsePgDate(strIf(saida, func(r *scraper.ManobrasRow) string { return r.RawDate })),
-			EtdTime:        parsePgTime(strIf(saida, func(r *scraper.ManobrasRow) string { return r.RawTime })),
-			Zp21Sourced:    true,
-		})
-		if err != nil {
-			return fmt.Errorf("criando port call: %w", err)
-		}
-		result.PortCallsCreated++
-
-		markZP21Seen(ctx, q, newPC.ID, scrapeTime)
-
-		// Auto-atracação: novo port call criado já com status berthed (app estava fora).
-		// Usa data corrente — não sabemos quando exatamente atracou.
-		if initialStatus == "berthed" {
-			if err := autoRegisterBerthing(ctx, q, newPC.ID, time.Now()); err != nil {
-				log.Printf("[portcall] auto-atracação falhou para %s: %v", v.Name, err)
+	// ── R7: conclusão automática por partida confirmada (active+berthed) ────────
+	// Gatilho: ZP-21 mostra APENAS 'saida' (entrada=nil) E situação ≠ "atracado".
+	// Quando o navio está partindo, o ZP-21 remove a linha de chegada e mantém só a de saída.
+	// Exceção: situação "atracado" com só saída = ETS prevista (suspensão planejada) —
+	//   navio ainda está no berço; cai no fluxo de atualização de ETD abaixo, sem concluir.
+	// 'entrada+saída' = navio atracado normal (atualiza ETD abaixo, não conclui).
+	// 'só entrada'    = atualiza ETA abaixo, não conclui.
+	// Conclusão por desaparecimento total é tratada por GetStaleBerthedPortCalls (R4/R5).
+	if pc.PortCallStatus == "active" && pc.VesselStatus == "berthed" && saida != nil && entrada == nil {
+		if !strings.Contains(saida.Situation, "atrac") {
+			// Situação diferente de "atracado" (ou ausente) → navio está partindo. Conclui.
+			if err := autoCompleteDeparture(ctx, q, pc.ID, v.RiskLevel, v.LastInspectionDate); err != nil {
+				log.Printf("[portcall] R7: auto-conclusão falhou para %s: %v", v.Name, err)
 			} else {
-				log.Printf("[portcall] auto-atracação registrada para %s (data corrente)", v.Name)
+				log.Printf("[portcall] R7: %s suspendeu (só saida, situação: %q)", v.Name, saida.Situation)
 			}
+			return nil
 		}
-		return nil
+		log.Printf("[portcall] R7 excluído: %s tem só saida mas situação=%q → ETS prevista, não conclui", v.Name, saida.Situation)
 	}
 
 	// 4. Atualiza o port call existente.
@@ -167,7 +171,6 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 
 	// ── Auto-atracação ──────────────────────────────────────────────────────────
 	// Hierarquia: se actual_arrival já está preenchido, ZP-21 NÃO sobrescreve.
-	// Se ainda não está, e detectamos que o navio já atracou, registra automaticamente.
 	if !pc.ActualArrival.Valid && pc.PortCallStatus == "planned" {
 		if entrada == nil && saida != nil {
 			// Apenas saída visível → navio atracou entre ciclos de scraping.
@@ -211,6 +214,56 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 	return nil
 }
 
+// createPortCallEntry cria um novo port call para o vessel com os dados ZP-21.
+// Detecta auto-atracação quando apenas linha de saída está visível.
+func createPortCallEntry(ctx context.Context, q *sqlc.Queries, v sqlc.Vessel, entrada, saida *scraper.ManobrasRow, result *ScrapeResult, scrapeTime time.Time) error {
+	initialStatus := "navigating"
+	if entrada == nil && saida != nil {
+		initialStatus = "berthed"
+	}
+
+	newPC, err := q.CreatePortCall(ctx, sqlc.CreatePortCallParams{
+		VesselID:       v.ID,
+		Terminal:       optStr(terminalOf(entrada, saida)),
+		VesselStatus:   initialStatus,
+		PortCallStatus: "planned",
+		EtaDate:        parsePgDate(strIf(entrada, func(r *scraper.ManobrasRow) string { return r.RawDate })),
+		EtaTime:        parsePgTime(strIf(entrada, func(r *scraper.ManobrasRow) string { return r.RawTime })),
+		EtdDate:        parsePgDate(strIf(saida, func(r *scraper.ManobrasRow) string { return r.RawDate })),
+		EtdTime:        parsePgTime(strIf(saida, func(r *scraper.ManobrasRow) string { return r.RawTime })),
+		Zp21Sourced:    true,
+	})
+	if err != nil {
+		return fmt.Errorf("criando port call: %w", err)
+	}
+	result.PortCallsCreated++
+	markZP21Seen(ctx, q, newPC.ID, scrapeTime)
+
+	if initialStatus == "berthed" {
+		if err := autoRegisterBerthing(ctx, q, newPC.ID, time.Now()); err != nil {
+			log.Printf("[portcall] auto-atracação falhou para %s: %v", v.Name, err)
+		} else {
+			log.Printf("[portcall] auto-atracação registrada para %s (data corrente)", v.Name)
+		}
+	}
+	return nil
+}
+
+// autoCompleteDeparture conclui automaticamente uma escala ativa.
+// Usa data corrente como actual_departure e tira snapshot dos dados atuais do navio.
+func autoCompleteDeparture(ctx context.Context, q *sqlc.Queries, portCallID int64, riskLevel *string, lastInspDate pgtype.Date) error {
+	var ts pgtype.Timestamptz
+	_ = ts.Scan(midnightOf(time.Now()))
+	priority := vessel.CalcPriority(riskLevel, lastInspDate)
+	priorityStr := string(priority)
+	return q.RegisterDeparture(ctx, sqlc.RegisterDepartureParams{
+		ID:                portCallID,
+		ActualDeparture:   ts,
+		RiskLevelSnapshot: riskLevel,
+		PrioritySnapshot:  &priorityStr,
+	})
+}
+
 // markZP21Seen atualiza last_zp21_seen_at para o port call dado.
 // Erros são apenas logados — falha aqui não deve interromper o ciclo de scraping.
 func markZP21Seen(ctx context.Context, q *sqlc.Queries, portCallID int64, t time.Time) {
@@ -228,7 +281,7 @@ func markZP21Seen(ctx context.Context, q *sqlc.Queries, portCallID int64, t time
 // Só age se actual_arrival ainda estiver vazio (hierarquia: dado consolidado > automático).
 func autoRegisterBerthing(ctx context.Context, q *sqlc.Queries, portCallID int64, date time.Time) error {
 	var ts pgtype.Timestamptz
-	_ = ts.Scan(date.Truncate(24 * time.Hour))
+	_ = ts.Scan(midnightOf(date))
 	return q.RegisterBerthing(ctx, sqlc.RegisterBerthingParams{
 		ID:            portCallID,
 		ActualArrival: ts,
@@ -369,6 +422,19 @@ func pgNumericF(n pgtype.Numeric) float64 {
 		return 0
 	}
 	return f.Float64
+}
+
+// midnightOf retorna meia-noite do dia de t na mesma timezone de t.
+//
+// Substitui t.Truncate(24*time.Hour) que sempre trunca para meia-noite UTC,
+// causando data errada entre 00h00 e 02h59 no fuso de São Paulo (UTC-3):
+//   - 01h00 SP = 04h00 UTC → Truncate → 00h00 UTC = 21h00 SP do dia anterior ✗
+//   - midnightOf → 00h00 SP do dia correto ✓
+//
+// Funciona corretamente tanto para time.Now() (timezone SP após time.Local = SP)
+// quanto para datas vindas do PostgreSQL DATE (timezone UTC, meia-noite UTC já correta).
+func midnightOf(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
 // floatNumeric converte float64 para pgtype.Numeric. Retorna inválido para zero.

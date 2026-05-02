@@ -72,8 +72,8 @@
     {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
     <form method="POST" action="/scrape/zp21">
       <button type="submit" class="btn btn-secondary"
-              onclick="this.disabled=true;this.textContent='Buscando…';this.form.submit()">
-        ↻ Atualizar ZP-21
+              onclick="this.disabled=true;this.textContent='Iniciando…';this.form.submit()">
+        ↻ Atualizar Escalas
       </button>
     </form>
     {{end}}
@@ -186,7 +186,7 @@
   {{else}}
   <div class="empty">
     Nenhum navio mercante com port call ativo.<br>
-    <small style="margin-top:0.5rem;display:block">Use "↻ Atualizar ZP-21" para buscar as manobras previstas.</small>
+    <small style="margin-top:0.5rem;display:block">Use "↻ Atualizar Escalas" para buscar as manobras previstas.</small>
   </div>
   {{end}}
 </div>

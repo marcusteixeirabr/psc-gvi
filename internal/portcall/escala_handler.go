@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/marcusteixeirabr/psc-gvi/internal/auth"
 	"github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
+	"github.com/marcusteixeirabr/psc-gvi/internal/pagination"
 	"github.com/marcusteixeirabr/psc-gvi/internal/vessel"
 )
 
@@ -138,20 +139,34 @@ func (h *EscalaHandler) NewSave(c *gin.Context) {
 func (h *EscalaHandler) List(c *gin.Context) {
 	now := time.Now()
 
-	// Filtros da query string.
 	statusFilter := c.DefaultQuery("status", "")
 	monthStr := c.DefaultQuery("mes", fmt.Sprintf("%d-%02d", now.Year(), now.Month()))
-
 	year, month := parseYearMonth(monthStr)
 
 	vesselIDStr := c.DefaultQuery("vessel_id", "0")
 	vesselID, _ := strconv.ParseInt(vesselIDStr, 10, 64)
 
-	rows, err := h.q.ListEscalas(c.Request.Context(), sqlc.ListEscalasParams{
+	params := sqlc.CountEscalasParams{
 		Status:   statusFilter,
 		VesselID: vesselID,
 		Year:     int32(year),
 		Month:    int32(month),
+	}
+
+	total, err := h.q.CountEscalas(c.Request.Context(), params)
+	if err != nil {
+		c.HTML(http.StatusInternalServerError, "escalas.html", gin.H{"Error": err.Error()})
+		return
+	}
+
+	pg := pagination.FromQuery(c, int(total), pagination.DefaultPageSize)
+
+	rows, err := h.q.ListEscalasPaged(c.Request.Context(), sqlc.ListEscalasPagedParams{
+		Status:   statusFilter,
+		VesselID: vesselID,
+		Year:     int32(year),
+		Month:    int32(month),
+		Offset:   int32(pg.Offset),
 	})
 	if err != nil {
 		c.HTML(http.StatusInternalServerError, "escalas.html", gin.H{"Error": err.Error()})
@@ -163,7 +178,6 @@ func (h *EscalaHandler) List(c *gin.Context) {
 		entries = append(entries, toEscalaView(r))
 	}
 
-	// Gera lista de meses para o seletor (mês atual + 11 anteriores).
 	months := buildMonthOptions(now)
 
 	c.HTML(http.StatusOK, "escalas.html", gin.H{
@@ -175,6 +189,7 @@ func (h *EscalaHandler) List(c *gin.Context) {
 		"VesselID":  vesselID,
 		"Flash":     c.Query("flash"),
 		"Error":     c.Query("error"),
+		"Page":      pg,
 	})
 }
 

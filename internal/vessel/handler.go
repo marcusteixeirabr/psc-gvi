@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/marcusteixeirabr/psc-gvi/internal/auth"
 	"github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
+	"github.com/marcusteixeirabr/psc-gvi/internal/pagination"
 )
 
 // Handler gerencia as requisições HTTP de navios.
@@ -27,10 +29,14 @@ func NewHandler(q *sqlc.Queries) *Handler {
 // ── Modelos de página ─────────────────────────────────────────────────────────
 
 type listPage struct {
-	User    *auth.UserSession
-	Vessels []VesselView
-	Flash   string
-	ShowAll bool // admin: exibindo navios desativados
+	User       *auth.UserSession
+	Vessels    []VesselView
+	Flash      string
+	ShowAll    bool // admin: exibindo navios desativados
+	Query      string
+	TotalAll   int
+	Page       pagination.Page
+	Filter     VesselFilter
 }
 
 type formPage struct {
@@ -82,14 +88,31 @@ type EscalaEntry struct {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 // List — GET /vessels
+// Suporta busca (?q=), filtros (?prioridade=, ?risco=, ?bandeira=) e paginação (?page=).
 // Admin com ?all=1 vê todos os navios, incluindo desativados.
 func (h *Handler) List(c *gin.Context) {
 	user := auth.GetUser(c)
 	showAll := user.Role == "admin" && c.Query("all") == "1"
+	q := strings.TrimSpace(c.Query("q"))
 
 	var vessels []sqlc.Vessel
 	var err error
-	if showAll {
+
+	// ── Busca global por nome ou IMO ────────────────────────────────────────
+	if q != "" {
+		imoArg := (*string)(nil)
+		if isIMO(q) {
+			imoArg = &q
+		}
+		vessels, err = h.q.SearchVessels(c.Request.Context(), sqlc.SearchVesselsParams{
+			NamePattern: "%" + q + "%",
+			Imo:         imoArg,
+		})
+		if err == nil && len(vessels) == 1 {
+			c.Redirect(http.StatusFound, fmt.Sprintf("/vessels/%d", vessels[0].ID))
+			return
+		}
+	} else if showAll {
 		vessels, err = h.q.ListAllVessels(c.Request.Context())
 	} else {
 		vessels, err = h.q.ListVessels(c.Request.Context())
@@ -102,12 +125,43 @@ func (h *Handler) List(c *gin.Context) {
 		})
 		return
 	}
+
+	views := ToViews(vessels)
+	totalAll := len(views)
+
+	// ── Filtros avançados (aplicados antes da paginação) ────────────────────
+	filter := VesselFilter{
+		Prioridade: c.Query("prioridade"),
+		Risco:      c.Query("risco"),
+		Bandeira:   c.Query("bandeira"),
+	}
+	if q == "" {
+		views = filter.Apply(views)
+	}
+
+	// ── Paginação in-memory ─────────────────────────────────────────────────
+	pg := pagination.FromQuery(c, len(views), pagination.DefaultPageSize)
+	start, end := pagination.Slice(len(views), pg.Offset, pg.PageSize)
+	views = views[start:end]
+
 	c.HTML(http.StatusOK, "vessel_list.html", listPage{
-		User:    user,
-		Vessels: ToViews(vessels),
-		Flash:   c.Query("flash"),
-		ShowAll: showAll,
+		User:     user,
+		Vessels:  views,
+		Flash:    c.Query("flash"),
+		ShowAll:  showAll,
+		Query:    q,
+		TotalAll: totalAll,
+		Page:     pg,
+		Filter:   filter,
 	})
+}
+
+// isIMO retorna true se o termo parece um número IMO (7 dígitos numéricos).
+func isIMO(s string) bool {
+	if len(s) != 7 {
+		return false
+	}
+	return strings.TrimLeft(s, "0123456789") == ""
 }
 
 // NewForm — GET /vessels/new

@@ -145,6 +145,22 @@
       {{end}}
     </tbody>
   </table>
+  {{if gt .Page.TotalPages 1}}
+  <div style="display:flex;align-items:center;gap:0.75rem;justify-content:center;margin-top:1rem;font-size:0.85rem;color:#4a5568;">
+    {{if .Page.HasPrev}}
+      <a href="{{.Page.PrevURL}}" style="padding:0.3rem 0.8rem;border:1px solid #cbd5e0;border-radius:4px;text-decoration:none;color:#2b6cb0;background:white;">← Anterior</a>
+    {{else}}
+      <span style="color:#a0aec0;">← Anterior</span>
+    {{end}}
+    <span>Página {{.Page.Current}} de {{.Page.TotalPages}} · {{.Page.TotalItems}} escalas</span>
+    {{if .Page.HasNext}}
+      <a href="{{.Page.NextURL}}" style="padding:0.3rem 0.8rem;border:1px solid #cbd5e0;border-radius:4px;text-decoration:none;color:#2b6cb0;background:white;">Próximo →</a>
+    {{else}}
+      <span style="color:#a0aec0;">Próximo →</span>
+    {{end}}
+  </div>
+  {{end}}
+
   {{else}}
   <div class="empty">Nenhuma escala encontrada para o filtro selecionado.</div>
   {{end}}

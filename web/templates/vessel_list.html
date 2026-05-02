@@ -9,11 +9,18 @@
     body { font-family: system-ui, sans-serif; background: #f7fafc; }
     .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
     h1 { font-size: 1.4rem; color: #1a202c; margin-bottom: 1rem; }
-    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
     .btn { padding: 0.45rem 1rem; border-radius: 5px; font-size: 0.875rem; font-weight: 600; cursor: pointer; text-decoration: none; border: none; }
     .btn-primary { background: #2b6cb0; color: white; }
     .btn-primary:hover { background: #2c5282; }
+    .btn-secondary { background: #edf2f7; color: #4a5568; }
+    .btn-secondary:hover { background: #e2e8f0; }
     .flash { padding: 0.6rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.875rem; background: #c6f6d5; color: #276749; border: 1px solid #9ae6b4; }
+    .search-banner { background: #ebf8ff; border: 1px solid #bee3f8; color: #2b6cb0; border-radius: 5px; padding: 0.5rem 1rem; font-size: 0.875rem; margin-bottom: 1rem; }
+    .filter-bar { background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; font-size: 0.85rem; }
+    .filter-bar select, .filter-bar input { padding: 0.3rem 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.82rem; }
+    .filter-bar label { color: #4a5568; font-weight: 600; font-size: 0.78rem; }
+    .filter-active { background: #ebf8ff; border-color: #bee3f8; }
     table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); overflow: hidden; }
     th { background: #edf2f7; text-align: left; padding: 0.65rem 1rem; font-size: 0.8rem; color: #4a5568; text-transform: uppercase; letter-spacing: 0.05em; }
     td { padding: 0.7rem 1rem; font-size: 0.875rem; color: #2d3748; border-top: 1px solid #e2e8f0; }
@@ -29,13 +36,27 @@
     .empty { text-align: center; padding: 3rem; color: #718096; }
     a.row-link { color: #2b6cb0; text-decoration: none; font-weight: 600; }
     a.row-link:hover { text-decoration: underline; }
+    .pag { display: flex; align-items: center; gap: 0.75rem; justify-content: center; margin-top: 1rem; font-size: 0.85rem; color: #4a5568; }
+    .pag a { padding: 0.3rem 0.8rem; border: 1px solid #cbd5e0; border-radius: 4px; text-decoration: none; color: #2b6cb0; background: white; }
+    .pag a:hover { background: #ebf8ff; }
+    .pag span { color: #718096; }
+    .counter { font-size: 0.8rem; color: #718096; }
   </style>
 </head>
 <body>
 {{template "nav" .}}
 <div class="container">
   <div class="toolbar">
-    <h1>Navios Cadastrados</h1>
+    <div>
+      <h1>Navios Cadastrados</h1>
+      {{if .Query}}
+        <span class="counter">{{.Page.TotalItems}} resultado(s) para "{{.Query}}"</span>
+      {{else if .Filter.Active}}
+        <span class="counter">{{.Page.TotalItems}} de {{.TotalAll}} navios</span>
+      {{else}}
+        <span class="counter">{{.Page.TotalItems}} navios</span>
+      {{end}}
+    </div>
     <div style="display:flex;gap:0.5rem;">
       {{if or (eq .User.Role "admin") (eq .User.Role "editor")}}
       <a href="/imo-search" class="btn btn-secondary">🔍 Buscar IMO</a>
@@ -51,8 +72,41 @@
     </div>
   </div>
 
-  {{if .Flash}}
-  <div class="flash">{{.Flash}}</div>
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+
+  {{if .Query}}
+  <div class="search-banner">
+    Busca por <strong>"{{.Query}}"</strong> — {{.Page.TotalItems}} resultado(s)
+    <a href="/vessels" style="margin-left:0.75rem;font-size:0.82rem;color:#c53030">✕ Limpar</a>
+  </div>
+  {{else}}
+  <!-- Filtros avançados -->
+  <form method="GET" action="/vessels">
+    <div class="filter-bar {{if .Filter.Active}}filter-active{{end}}">
+      <label>Prioridade:</label>
+      <select name="prioridade">
+        <option value="">Todas</option>
+        <option value="P1" {{if eq .Filter.Prioridade "P1"}}selected{{end}}>P1 — Vencida</option>
+        <option value="P2" {{if eq .Filter.Prioridade "P2"}}selected{{end}}>P2 — Próxima</option>
+        <option value="P3" {{if eq .Filter.Prioridade "P3"}}selected{{end}}>P3 — OK</option>
+        <option value="N/D" {{if eq .Filter.Prioridade "N/D"}}selected{{end}}>N/D</option>
+      </select>
+      <label>Risco:</label>
+      <select name="risco">
+        <option value="">Todos</option>
+        <option value="high" {{if eq .Filter.Risco "high"}}selected{{end}}>Alto</option>
+        <option value="standard" {{if eq .Filter.Risco "standard"}}selected{{end}}>Padrão</option>
+        <option value="low" {{if eq .Filter.Risco "low"}}selected{{end}}>Baixo</option>
+        <option value="not_found" {{if eq .Filter.Risco "not_found"}}selected{{end}}>Sem reg.</option>
+      </select>
+      <label>Bandeira:</label>
+      <input type="text" name="bandeira" value="{{.Filter.Bandeira}}" placeholder="ex: Panama" style="width:120px">
+      <button type="submit" class="btn btn-secondary">Filtrar</button>
+      {{if .Filter.Active}}
+      <a href="/vessels" class="btn btn-secondary" style="color:#c53030">✕ Limpar</a>
+      {{end}}
+    </div>
+  </form>
   {{end}}
 
   {{if .Vessels}}
@@ -94,8 +148,19 @@
       {{end}}
     </tbody>
   </table>
+
+  {{if gt .Page.TotalPages 1}}
+  <div class="pag">
+    {{if .Page.HasPrev}}<a href="{{.Page.PrevURL}}">← Anterior</a>{{else}}<span>← Anterior</span>{{end}}
+    <span>Página {{.Page.Current}} de {{.Page.TotalPages}} · {{.Page.TotalItems}} registros</span>
+    {{if .Page.HasNext}}<a href="{{.Page.NextURL}}">Próximo →</a>{{else}}<span>Próximo →</span>{{end}}
+  </div>
+  {{end}}
+
   {{else}}
-  <div class="empty">Nenhum navio cadastrado ainda.</div>
+  <div class="empty">
+    {{if .Query}}Nenhum navio encontrado para "{{.Query}}".{{else}}Nenhum navio cadastrado ainda.{{end}}
+  </div>
   {{end}}
 </div>
 </body>

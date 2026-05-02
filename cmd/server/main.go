@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"html/template"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,12 +17,24 @@ import (
 	"github.com/marcusteixeirabr/psc-gvi/internal/db"
 	"github.com/marcusteixeirabr/psc-gvi/internal/inspection"
 	dbsqlc "github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
+	"github.com/marcusteixeirabr/psc-gvi/internal/health"
 	"github.com/marcusteixeirabr/psc-gvi/internal/portcall"
 	"github.com/marcusteixeirabr/psc-gvi/internal/report"
+	"github.com/marcusteixeirabr/psc-gvi/internal/scheduler"
 	"github.com/marcusteixeirabr/psc-gvi/internal/vessel"
 )
 
 func main() {
+	// ── 0. Timezone ────────────────────────────────────────────────────────
+	// Fixa o fuso do processo como America/Sao_Paulo.
+	// Sem isso, time.Now() retorna UTC, e Format/Year produzem valores errados
+	// para qualquer hora entre 21h00 e 23h59 SP (= dia seguinte em UTC).
+	spLoc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		log.Fatal("ERRO ao carregar timezone America/Sao_Paulo: ", err)
+	}
+	time.Local = spLoc
+
 	// ── 1. Configuração ────────────────────────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {
@@ -39,7 +55,22 @@ func main() {
 	// ── 4. Sessões ─────────────────────────────────────────────────────────
 	auth.InitStore(cfg.SessionSecret)
 
-	// ── 5. Roteador ────────────────────────────────────────────────────────
+	// ── 5. Scheduler automático ────────────────────────────────────────────
+	alerter := scheduler.NewAlerter(scheduler.SMTPConfig{
+		Host:       cfg.SMTPHost,
+		Port:       cfg.SMTPPort,
+		User:       cfg.SMTPUser,
+		Password:   cfg.SMTPPassword,
+		AlertEmail: cfg.AlertEmail,
+	})
+
+	sched := scheduler.New(queries, cfg.ZP21URL).
+		WithVesselFinder(cfg.VesselFinderURL).
+		WithCIALA(cfg.CIALAURL, cfg.CIALAUsername, cfg.CIALAPassword).
+		WithAlerter(alerter)
+	sched.Start()
+
+	// ── 6. Roteador ────────────────────────────────────────────────────────
 	router := gin.Default()
 
 	// Funções auxiliares para os templates Go.
@@ -51,6 +82,8 @@ func main() {
 			if s == nil { return "" }
 			return *s
 		},
+		"formatTS":       health.FormatTS,
+		"formatDuration": health.FormatDuration,
 	})
 
 	router.LoadHTMLGlob("web/templates/*.html")
@@ -70,11 +103,14 @@ func main() {
 	vesselHandler     := vessel.NewHandler(queries)
 	imoFinder         := vessel.NewIMOFinder(queries, cfg.VesselFinderURL)
 	cialaHandler      := vessel.NewCIALAHandler(queries, cfg.CIALAURL, cfg.CIALAUsername, cfg.CIALAPassword, cfg.VesselFinderURL)
-	portcallHandler   := portcall.NewHandler(queries, cfg.ZP21URL)
 	escalaHandler     := portcall.NewEscalaHandler(queries)
 	dashboardHandler  := dashboard.NewHandler(queries)
 	inspectionHandler := inspection.NewHandler(queries)
 	reportHandler     := report.NewHandler(queries)
+	healthHandler := health.NewHandler(queries)
+	if alerter != nil {
+		healthHandler = healthHandler.WithMailer(alerter)
+	}
 
 	// ── Rotas protegidas ───────────────────────────────────────────────────
 	protected := router.Group("/")
@@ -101,7 +137,7 @@ func main() {
 			editors.POST("/vessels", vesselHandler.Create)
 			editors.GET("/vessels/:id/edit", vesselHandler.EditForm)
 			editors.POST("/vessels/:id", vesselHandler.Update)
-			editors.POST("/scrape/zp21", portcallHandler.ScrapeZP21)
+			editors.POST("/scrape/zp21", sched.TriggerCycle)
 			editors.GET("/escalas/new", escalaHandler.NewForm)
 			editors.POST("/escalas/new", escalaHandler.NewSave)
 			editors.POST("/escalas/:id/berthing", escalaHandler.RegisterBerthing)
@@ -131,14 +167,41 @@ func main() {
 			admins.POST("/vessels/:id/deactivate", vesselHandler.Deactivate)
 			admins.POST("/vessels/:id/delete", vesselHandler.Delete)
 			admins.POST("/vessels/:id/merge", vesselHandler.MergeVessel)
+			admins.GET("/admin/health", healthHandler.Show)
+			admins.POST("/admin/health/test-email", healthHandler.TestEmail)
 		}
 	}
 
-	// ── 6. Servidor HTTP ────────────────────────────────────────────────────
-	addr := ":" + cfg.Port
-	log.Printf("Servidor iniciado em http://localhost%s (env: %s)\n", addr, cfg.Env)
-
-	if err := router.Run(addr); err != nil {
-		log.Fatal("ERRO ao iniciar servidor: ", err)
+	// ── 7. Servidor HTTP com graceful shutdown ─────────────────────────────
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
 	}
+
+	// Canal para capturar SIGINT/SIGTERM.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		log.Printf("Servidor iniciado em http://localhost:%s (env: %s)\n", cfg.Port, cfg.Env)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("ERRO ao iniciar servidor: ", err)
+		}
+	}()
+
+	// Aguarda sinal de encerramento.
+	<-quit
+	log.Println("Encerrando servidor...")
+
+	// Para o scheduler antes de fechar o servidor.
+	sched.Stop()
+
+	// Drain das conexões HTTP ativas (timeout de 10s).
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("Shutdown forçado: %v", err)
+	}
+
+	log.Println("Servidor encerrado.")
 }

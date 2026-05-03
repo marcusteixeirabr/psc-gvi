@@ -4,7 +4,8 @@ set -e
 cd /opt/psc-gvi
 
 echo '==> [1/3] Atualizando templates e migrations...'
-git pull origin main
+git fetch origin main
+git reset --hard origin/main
 
 echo '==> [2/3] Aplicando migrations...'
 set -a

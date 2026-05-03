@@ -34,10 +34,13 @@ jobs:
       - name: Adicionar VPS ao known_hosts
         run: ssh-keyscan ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
+      - name: Testar conectividade SSH
+        run: ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "echo 'SSH OK'"
+
       - name: Transferir binário para VPS
         run: |
-          scp psc-gvi \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/psc-gvi/psc-gvi
+          cat psc-gvi | ssh ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cat > /opt/psc-gvi/psc-gvi.new && chmod +x /opt/psc-gvi/psc-gvi.new && mv /opt/psc-gvi/psc-gvi.new /opt/psc-gvi/psc-gvi"
 
       - name: Executar deploy na VPS
         run: |

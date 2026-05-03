@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +47,7 @@ func ProcessManobras(ctx context.Context, q *sqlc.Queries, rows []scraper.Manobr
 	for _, group := range groupRows(rows) {
 		if err := processGroup(ctx, q, group, &result, scrapeTime); err != nil {
 			name := group[0].VesselName
-			log.Printf("[portcall] erro processando %q: %v", name, err)
+			slog.Error("erro processando vessel", "component", "portcall", "vessel", name, "error", err)
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
 		}
 	}
@@ -57,7 +57,7 @@ func ProcessManobras(ctx context.Context, q *sqlc.Queries, rows []scraper.Manobr
 
 	// Cancela escalas ZP-21 planejadas que não apareceram neste ciclo (status → aborted).
 	if err := q.AbortStaleZP21PortCalls(ctx, scrapeTS); err != nil {
-		log.Printf("[portcall] AbortStaleZP21PortCalls falhou: %v", err)
+		slog.Error("AbortStaleZP21PortCalls falhou", "component", "portcall", "error", err)
 	}
 
 	// R5: conclui escalas ativas+atracadas que sumiram do ZP-21 E têm outro navio
@@ -65,13 +65,13 @@ func ProcessManobras(ctx context.Context, q *sqlc.Queries, rows []scraper.Manobr
 	// Escalas sem terminal ou sem outro navio no berço permanecem atracadas (R4).
 	staleBerthed, err := q.GetStaleBerthedPortCalls(ctx, scrapeTS)
 	if err != nil {
-		log.Printf("[portcall] GetStaleBerthedPortCalls falhou: %v", err)
+		slog.Error("GetStaleBerthedPortCalls falhou", "component", "portcall", "error", err)
 	} else {
 		for _, row := range staleBerthed {
 			if err := autoCompleteDeparture(ctx, q, row.ID, row.RiskLevel, row.LastInspectionDate); err != nil {
-				log.Printf("[portcall] R5: auto-conclusão falhou para %q: %v", row.VesselName, err)
+				slog.Error("R5: auto-conclusão falhou", "component", "portcall", "vessel", row.VesselName, "error", err)
 			} else {
-				log.Printf("[portcall] R5: %q suspendeu (sumiu do ZP-21, terminal ocupado por outro navio)", row.VesselName)
+				slog.Info("R5: vessel suspendeu (sumiu do ZP-21, terminal ocupado por outro navio)", "component", "portcall", "vessel", row.VesselName)
 			}
 		}
 	}
@@ -156,13 +156,13 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 		if !strings.Contains(saida.Situation, "atrac") {
 			// Situação diferente de "atracado" (ou ausente) → navio está partindo. Conclui.
 			if err := autoCompleteDeparture(ctx, q, pc.ID, v.RiskLevel, v.LastInspectionDate); err != nil {
-				log.Printf("[portcall] R7: auto-conclusão falhou para %s: %v", v.Name, err)
+				slog.Error("R7: auto-conclusão falhou", "component", "portcall", "vessel", v.Name, "error", err)
 			} else {
-				log.Printf("[portcall] R7: %s suspendeu (só saida, situação: %q)", v.Name, saida.Situation)
+				slog.Info("R7: vessel suspendeu (só saida)", "component", "portcall", "vessel", v.Name, "situacao", saida.Situation)
 			}
 			return nil
 		}
-		log.Printf("[portcall] R7 excluído: %s tem só saida mas situação=%q → ETS prevista, não conclui", v.Name, saida.Situation)
+		slog.Info("R7 excluído: ETS prevista, não conclui", "component", "portcall", "vessel", v.Name, "situacao", saida.Situation)
 	}
 
 	// 4. Atualiza o port call existente.
@@ -180,9 +180,9 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 				berthDate = pc.EtaDate.Time
 			}
 			if err := autoRegisterBerthing(ctx, q, pc.ID, berthDate); err != nil {
-				log.Printf("[portcall] auto-atracação falhou para %s: %v", v.Name, err)
+				slog.Error("auto-atracação falhou", "component", "portcall", "vessel", v.Name, "error", err)
 			} else {
-				log.Printf("[portcall] auto-atracação: %s → data %s", v.Name, berthDate.Format("02/01/2006"))
+				slog.Info("auto-atracação registrada", "component", "portcall", "vessel", v.Name, "data", berthDate.Format("02/01/2006"))
 			}
 		}
 	}
@@ -241,9 +241,9 @@ func createPortCallEntry(ctx context.Context, q *sqlc.Queries, v sqlc.Vessel, en
 
 	if initialStatus == "berthed" {
 		if err := autoRegisterBerthing(ctx, q, newPC.ID, time.Now()); err != nil {
-			log.Printf("[portcall] auto-atracação falhou para %s: %v", v.Name, err)
+			slog.Error("auto-atracação falhou na criação", "component", "portcall", "vessel", v.Name, "error", err)
 		} else {
-			log.Printf("[portcall] auto-atracação registrada para %s (data corrente)", v.Name)
+			slog.Info("auto-atracação registrada na criação (data corrente)", "component", "portcall", "vessel", v.Name)
 		}
 	}
 	return nil
@@ -273,7 +273,7 @@ func markZP21Seen(ctx context.Context, q *sqlc.Queries, portCallID int64, t time
 		ID:             portCallID,
 		LastZp21SeenAt: ts,
 	}); err != nil {
-		log.Printf("[portcall] markZP21Seen falhou para port call %d: %v", portCallID, err)
+		slog.Error("markZP21Seen falhou", "component", "portcall", "port_call_id", portCallID, "error", err)
 	}
 }
 

@@ -2,7 +2,7 @@ package vessel
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -85,7 +85,7 @@ func (h *CIALAHandler) LookupVessel(c *gin.Context) {
 	result, err := client.LookupIMO(c.Request.Context(), *v.Imo)
 	if err != nil {
 		// Tenta reset + nova tentativa uma vez (sessão pode ter expirado).
-		log.Printf("[ciala] falha, tentando reset de sessão: %v", err)
+		slog.Warn("falha no CIALA, tentando reset de sessão", "component", "ciala-handler", "error", err)
 		h.resetClient()
 		client, err2 := h.getClient()
 		if err2 == nil {
@@ -93,7 +93,7 @@ func (h *CIALAHandler) LookupVessel(c *gin.Context) {
 		}
 	}
 	if err != nil {
-		log.Printf("[ciala] falha para IMO %s: %v", *v.Imo, err)
+		slog.Error("falha no CIALA após reset", "component", "ciala-handler", "imo", *v.Imo, "error", err)
 		c.Redirect(http.StatusFound, "/vessels/"+strconv.FormatInt(id, 10)+
 			"?error="+url.QueryEscape("CIALA: "+err.Error()))
 		return
@@ -176,7 +176,7 @@ func (h *CIALAHandler) BatchStream(c *gin.Context) {
 
 		result, err := client.LookupIMO(c.Request.Context(), imo)
 		if err != nil {
-			log.Printf("[ciala-batch] %q: %v", v.Name, err)
+			slog.Error("falha na consulta CIALA em lote", "component", "ciala-handler", "vessel", v.Name, "error", err)
 			send("fail", v.Name+"|"+err.Error())
 			failed++
 			continue
@@ -273,7 +273,7 @@ func (h *CIALAHandler) AtualizarDados(c *gin.Context) {
 	}
 	result, err := client.LookupIMO(c.Request.Context(), imo)
 	if err != nil {
-		log.Printf("[atualizar] CIALA falhou para IMO %s, tentando reset: %v", imo, err)
+		slog.Warn("CIALA falhou, tentando reset", "component", "ciala-handler", "imo", imo, "error", err)
 		h.resetClient()
 		if c2, err2 := h.getClient(); err2 == nil {
 			result, err = c2.LookupIMO(c.Request.Context(), imo)

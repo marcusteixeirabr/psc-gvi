@@ -3,7 +3,7 @@ package scraper
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -48,7 +48,7 @@ func FindIMO(ctx context.Context, baseURL, vesselName string, loa, beam float64)
 
 	// 1 resultado → retorna direto. VesselFinder já filtrou por nome.
 	if len(results) == 1 {
-		log.Printf("[vesselfinder] IMO %s encontrado para %q", results[0].IMO, vesselName)
+		slog.Info("IMO encontrado", "component", "vesselfinder", "imo", results[0].IMO, "vessel", vesselName)
 		return results[0].IMO, nil
 	}
 
@@ -93,14 +93,11 @@ func SearchVesselFinder(ctx context.Context, baseURL, vesselName string) ([]Vess
 	}
 
 	results := parseVesselFinderResults(doc)
-	log.Printf("[vesselfinder] %d resultados para %q — dims: %v", len(results),
-		vesselName, func() []string {
-			s := make([]string, len(results))
-			for i, r := range results {
-				s[i] = fmt.Sprintf("IMO%s LOA%.1f Beam%.1f", r.IMO, r.LOA, r.Beam)
-			}
-			return s
-		}())
+	dims := make([]string, len(results))
+	for i, r := range results {
+		dims[i] = fmt.Sprintf("IMO%s LOA%.1f Beam%.1f", r.IMO, r.LOA, r.Beam)
+	}
+	slog.Info("resultados da busca", "component", "vesselfinder", "total", len(results), "vessel", vesselName, "dims", dims)
 	return results, nil
 }
 
@@ -185,7 +182,7 @@ func disambiguateByDimensions(vesselName string, candidates []VesselFinderResult
 	// Nenhum candidato com dimensões → VesselFinder não retornou o campo size.
 	// Se o vessel local também não tem dimensões, aceita o primeiro resultado.
 	if !anyHasDims {
-		log.Printf("[vesselfinder] sem dimensões extraídas para %q, usando primeiro resultado: IMO %s", vesselName, candidates[0].IMO)
+		slog.Info("sem dimensões extraídas, usando primeiro resultado", "component", "vesselfinder", "vessel", vesselName, "imo", candidates[0].IMO)
 		return candidates[0].IMO, nil
 	}
 
@@ -197,7 +194,7 @@ func disambiguateByDimensions(vesselName string, candidates []VesselFinderResult
 	// Passo 1: tolerância rígida ±5%.
 	for _, r := range candidates {
 		if WithinTolerance(loa, r.LOA, 0.05) && WithinTolerance(beam, r.Beam, 0.05) {
-			log.Printf("[vesselfinder] IMO %s para %q (match ±5%%)", r.IMO, vesselName)
+			slog.Info("IMO encontrado por match ±5%", "component", "vesselfinder", "imo", r.IMO, "vessel", vesselName)
 			return r.IMO, nil
 		}
 	}
@@ -224,7 +221,7 @@ func disambiguateByDimensions(vesselName string, candidates []VesselFinderResult
 		}
 	}
 	if bestIdx >= 0 && bestDiff <= 0.30 { // até 30% combinado (15% por dimensão)
-		log.Printf("[vesselfinder] IMO %s para %q (melhor match, diff=%.2f)", candidates[bestIdx].IMO, vesselName, bestDiff)
+		slog.Info("IMO encontrado por melhor match", "component", "vesselfinder", "imo", candidates[bestIdx].IMO, "vessel", vesselName, "diff", bestDiff)
 		return candidates[bestIdx].IMO, nil
 	}
 

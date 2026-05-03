@@ -3,7 +3,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/smtp"
 	"sync"
 	"time"
@@ -85,11 +85,11 @@ func (a *Alerter) checkConsecutiveErrors(ctx context.Context, q *dbsqlc.Queries,
 		scraperName, count, time.Now().Format("02/01/2006 15:04:05"),
 	)
 	if err := a.send(subject, body); err != nil {
-		log.Printf("[alerter] erro ao enviar alerta para %s: %v", scraperName, err)
+		slog.Error("erro ao enviar alerta", "component", "alerter", "scraper", scraperName, "count", count, "error", err)
 		return
 	}
 	a.markSent(key)
-	log.Printf("[alerter] alerta enviado: %s falhou %d vezes", scraperName, count)
+	slog.Info("alerta enviado", "component", "alerter", "scraper", scraperName, "count", count)
 }
 
 func (a *Alerter) checkZP21Silent(ctx context.Context, q *dbsqlc.Queries) {
@@ -111,11 +111,11 @@ func (a *Alerter) checkZP21Silent(ctx context.Context, q *dbsqlc.Queries) {
 		count, time.Now().Format("02/01/2006 15:04:05"),
 	)
 	if err := a.send(subject, body); err != nil {
-		log.Printf("[alerter] erro ao enviar alerta ZP-21 silencioso: %v", err)
+		slog.Error("erro ao enviar alerta ZP-21 silencioso", "component", "alerter", "error", err)
 		return
 	}
 	a.markSent(key)
-	log.Printf("[alerter] alerta enviado: ZP-21 silencioso (%d execuções sem navios)", count)
+	slog.Info("alerta ZP-21 silencioso enviado", "component", "alerter", "execucoes", count)
 }
 
 func (a *Alerter) canSend(key string) bool {

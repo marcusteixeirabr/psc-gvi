@@ -2,7 +2,7 @@ package scheduler
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -48,7 +48,7 @@ func (s *cialaSession) reset() {
 func RunAutoCIALA(ctx context.Context, q *dbsqlc.Queries, session *cialaSession) RunResult {
 	vessels, err := q.ListVesselsForAutoCIALA(ctx)
 	if err != nil {
-		log.Printf("[auto-ciala] erro ao listar navios: %v", err)
+		slog.Error("erro ao listar navios", "component", "auto-ciala", "error", err)
 		return RunResult{Err: err}
 	}
 	if len(vessels) == 0 {
@@ -57,7 +57,7 @@ func RunAutoCIALA(ctx context.Context, q *dbsqlc.Queries, session *cialaSession)
 
 	client, err := session.get()
 	if err != nil {
-		log.Printf("[auto-ciala] erro ao criar cliente CIALA: %v", err)
+		slog.Error("erro ao criar cliente CIALA", "component", "auto-ciala", "error", err)
 		return RunResult{Err: err}
 	}
 
@@ -71,7 +71,7 @@ func RunAutoCIALA(ctx context.Context, q *dbsqlc.Queries, session *cialaSession)
 		result, err := client.LookupIMO(ctx, imo)
 		if err != nil {
 			// Tenta reset de sessão uma vez (token pode ter expirado).
-			log.Printf("[auto-ciala] %q: falha, tentando reset de sessão: %v", v.Name, err)
+			slog.Warn("falha no CIALA, tentando reset de sessão", "component", "auto-ciala", "vessel", v.Name, "error", err)
 			session.reset()
 			client, err = session.get()
 			if err == nil {
@@ -79,7 +79,7 @@ func RunAutoCIALA(ctx context.Context, q *dbsqlc.Queries, session *cialaSession)
 			}
 		}
 		if err != nil {
-			log.Printf("[auto-ciala] %q: CIALA indisponível: %v", v.Name, err)
+			slog.Error("CIALA indisponível", "component", "auto-ciala", "vessel", v.Name, "error", err)
 			failed++
 			continue
 		}
@@ -119,19 +119,19 @@ func RunAutoCIALA(ctx context.Context, q *dbsqlc.Queries, session *cialaSession)
 			VesselType:                 vesselType,
 			YearBuilt:                  yearBuilt,
 		}); err != nil {
-			log.Printf("[auto-ciala] %q: erro ao salvar: %v", v.Name, err)
+			slog.Error("erro ao salvar dados CIALA", "component", "auto-ciala", "vessel", v.Name, "error", err)
 			failed++
 			continue
 		}
 
 		if err := q.UpdateVesselLastCIALACheck(ctx, v.ID); err != nil {
-			log.Printf("[auto-ciala] %q: erro ao atualizar last_ciala_checked_at: %v", v.Name, err)
+			slog.Warn("erro ao atualizar last_ciala_checked_at", "component", "auto-ciala", "vessel", v.Name, "error", err)
 		}
 
-		log.Printf("[auto-ciala] %q: atualizado (risco: %v)", v.Name, riskLevel)
+		slog.Info("navio atualizado", "component", "auto-ciala", "vessel", v.Name, "risk_level", riskLevel)
 		found++
 	}
 
-	log.Printf("[auto-ciala] ciclo concluído — %d atualizado(s), %d falha(s)", found, failed)
+	slog.Info("ciclo concluído", "component", "auto-ciala", "atualizados", found, "falhas", failed)
 	return RunResult{Processed: found, Failed: failed}
 }

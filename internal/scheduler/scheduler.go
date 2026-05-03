@@ -3,7 +3,7 @@ package scheduler
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -63,15 +63,15 @@ func (s *Scheduler) Start() {
 	// Primeiro disparo após 1 minuto — não espera o ciclo completo de 1 hora.
 	time.AfterFunc(1*time.Minute, s.runZP21Cycle)
 
-	log.Println("[scheduler] iniciado — primeiro ciclo ZP-21 em 1 minuto, depois a cada hora")
+	slog.Info("iniciado — primeiro ciclo ZP-21 em 1 minuto, depois a cada hora", "component", "scheduler")
 }
 
 // Stop aguarda o término do ciclo em andamento e para o scheduler.
 func (s *Scheduler) Stop() {
-	log.Println("[scheduler] aguardando término do ciclo em andamento...")
+	slog.Info("aguardando término do ciclo em andamento...", "component", "scheduler")
 	ctx := s.cron.Stop()
 	<-ctx.Done()
-	log.Println("[scheduler] parado")
+	slog.Info("parado", "component", "scheduler")
 }
 
 // TriggerCycle dispara o ciclo completo em background e redireciona imediatamente.
@@ -89,27 +89,24 @@ func (s *Scheduler) TriggerCycle(c *gin.Context) {
 // Erros são logados mas nunca sobem — o servidor não deve cair por falha de scraping.
 func (s *Scheduler) runZP21Cycle() {
 	start := time.Now()
-	log.Println("[scheduler] iniciando ciclo ZP-21")
+	slog.Info("iniciando ciclo ZP-21", "component", "scheduler")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	rows, fetchErr := scraper.FetchManobras(ctx, s.zp21URL)
 	if fetchErr != nil {
-		log.Printf("[scheduler] FetchManobras falhou: %v", fetchErr)
+		slog.Error("FetchManobras falhou", "component", "scheduler", "error", fetchErr)
 		RecordRun(ctx, s.queries, "zp21", start, 0, 0, 0, fetchErr)
 		return
 	}
 
 	result := portcall.ProcessManobras(ctx, s.queries, rows)
 
-	log.Printf("[scheduler] ciclo ZP-21 concluído em %s — %s",
-		time.Since(start).Round(time.Millisecond),
-		result.Summary(),
-	)
+	slog.Info("ciclo ZP-21 concluído", "component", "scheduler", "duracao", time.Since(start).Round(time.Millisecond), "resultado", result.Summary())
 
 	for _, e := range result.Errors {
-		log.Printf("[scheduler] erro no ciclo: %s", e)
+		slog.Error("erro no ciclo", "component", "scheduler", "error", e)
 	}
 
 	RecordRun(ctx, s.queries, "zp21", start, result.RowsFound, result.PortCallsUpdated+result.PortCallsCreated, len(result.Errors), nil)

@@ -3,7 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -19,7 +19,7 @@ const autoIMOMaxPerCycle = 10
 func RunAutoIMO(ctx context.Context, q *dbsqlc.Queries, vesselFinderURL string) RunResult {
 	vessels, err := q.ListVesselsWithoutIMO(ctx)
 	if err != nil {
-		log.Printf("[auto-imo] erro ao listar navios sem IMO: %v", err)
+		slog.Error("erro ao listar navios sem IMO", "component", "auto-imo", "error", err)
 		return RunResult{Err: err}
 	}
 	if len(vessels) == 0 {
@@ -27,8 +27,7 @@ func RunAutoIMO(ctx context.Context, q *dbsqlc.Queries, vesselFinderURL string) 
 	}
 
 	if len(vessels) > autoIMOMaxPerCycle {
-		log.Printf("[auto-imo] %d navios sem IMO — processando apenas os primeiros %d",
-			len(vessels), autoIMOMaxPerCycle)
+		slog.Warn("navios sem IMO acima do limite do ciclo", "component", "auto-imo", "total", len(vessels), "processando", autoIMOMaxPerCycle)
 		vessels = vessels[:autoIMOMaxPerCycle]
 	}
 
@@ -43,7 +42,7 @@ func RunAutoIMO(ctx context.Context, q *dbsqlc.Queries, vesselFinderURL string) 
 		imo, err := scraper.FindIMO(ctx, vesselFinderURL, searchName,
 			numericToFloat64(v.LengthM), numericToFloat64(v.BeamM))
 		if err != nil {
-			log.Printf("[auto-imo] %q: não encontrado — %v", v.Name, err)
+			slog.Warn("navio não encontrado no VesselFinder", "component", "auto-imo", "vessel", v.Name, "error", err)
 			failed++
 		} else {
 			saveErr := q.UpdateVesselIMO(ctx, dbsqlc.UpdateVesselIMOParams{
@@ -53,13 +52,13 @@ func RunAutoIMO(ctx context.Context, q *dbsqlc.Queries, vesselFinderURL string) 
 			if saveErr != nil {
 				var pgErr *pgconn.PgError
 				if errors.As(saveErr, &pgErr) && pgErr.Code == "23505" {
-					log.Printf("[auto-imo] %q: IMO %s já existe em outro cadastro — requer merge manual", v.Name, imo)
+					slog.Warn("IMO já existe em outro cadastro — requer merge manual", "component", "auto-imo", "vessel", v.Name, "imo", imo)
 				} else {
-					log.Printf("[auto-imo] %q: erro ao salvar IMO: %v", v.Name, saveErr)
+					slog.Error("erro ao salvar IMO", "component", "auto-imo", "vessel", v.Name, "error", saveErr)
 				}
 				failed++
 			} else {
-				log.Printf("[auto-imo] %q: IMO %s registrado", v.Name, imo)
+				slog.Info("IMO registrado", "component", "auto-imo", "vessel", v.Name, "imo", imo)
 				found++
 			}
 		}
@@ -73,6 +72,6 @@ func RunAutoIMO(ctx context.Context, q *dbsqlc.Queries, vesselFinderURL string) 
 	}
 
 done:
-	log.Printf("[auto-imo] ciclo concluído — %d encontrado(s), %d não encontrado(s)", found, failed)
+	slog.Info("ciclo concluído", "component", "auto-imo", "encontrados", found, "nao_encontrados", failed)
 	return RunResult{Processed: found, Failed: failed}
 }

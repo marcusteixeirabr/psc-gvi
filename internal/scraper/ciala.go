@@ -6,7 +6,7 @@ package scraper
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -87,15 +87,15 @@ func (c *CIALAClient) Login(ctx context.Context) error {
 	}
 
 	// Log de todos os campos do formulário para facilitar o debug.
-	log.Printf("[ciala] campos do formulário de login:")
+	slog.Info("campos do formulário de login", "component", "ciala")
 	doc.Find("form input").Each(func(_ int, s *goquery.Selection) {
 		name, _ := s.Attr("name")
 		typ, _ := s.Attr("type")
-		log.Printf("[ciala]   input name=%q type=%q", name, typ)
+		slog.Info("input detectado", "component", "ciala", "name", name, "type", typ)
 	})
 
 	csrfToken, _ := doc.Find("input[name='__RequestVerificationToken']").Attr("value")
-	log.Printf("[ciala] CSRF token: len=%d", len(csrfToken))
+	slog.Info("CSRF token obtido", "component", "ciala", "len", len(csrfToken))
 
 	// Detecta campos de email e senha no formulário.
 	// ASP.NET Core Razor Pages usa prefixo "Input." nos campos de modelo.
@@ -113,7 +113,7 @@ func (c *CIALAClient) Login(ctx context.Context) error {
 			break
 		}
 	}
-	log.Printf("[ciala] campos detectados: email=%q senha=%q", emailField, passField)
+	slog.Info("campos detectados", "component", "ciala", "email", emailField, "senha", passField)
 
 	// Extrai o action do formulário que contém o campo de e-mail (login local).
 	// A página tem múltiplos forms — o primeiro costuma ser ExternalLogin (OAuth).
@@ -133,7 +133,7 @@ func (c *CIALAClient) Login(ctx context.Context) error {
 	if strings.Contains(postURL, "ExternalLogin") {
 		postURL = loginURL
 	}
-	log.Printf("[ciala] POST para: %s", postURL)
+	slog.Info("POST para URL de login", "component", "ciala", "url", postURL)
 
 	form := url.Values{
 		emailField:                   {c.username},
@@ -155,13 +155,13 @@ func (c *CIALAClient) Login(ctx context.Context) error {
 	defer loginResp.Body.Close()
 
 	finalURL := loginResp.Request.URL.String()
-	log.Printf("[ciala] após login: status=%d URL=%s", loginResp.StatusCode, finalURL)
+	slog.Info("após login", "component", "ciala", "status", loginResp.StatusCode, "url", finalURL)
 
 	if strings.Contains(finalURL, "/Account/Login") || strings.Contains(finalURL, "/Identity/Account/Login") {
 		return fmt.Errorf("login falhou (URL final: %s) — verifique as credenciais no .env", finalURL)
 	}
 
-	log.Printf("[ciala] login bem-sucedido")
+	slog.Info("login bem-sucedido", "component", "ciala")
 	return nil
 }
 
@@ -182,7 +182,7 @@ func (c *CIALAClient) LookupIMO(ctx context.Context, imo string) (*CIALAResult, 
 
 	// Se a resposta for a página de login (sessão expirou), faz login e tenta de novo.
 	if isLoginPage(doc) {
-		log.Printf("[ciala] sessão expirou — refazendo login")
+		slog.Info("sessão expirou — refazendo login", "component", "ciala")
 		if err := c.Login(ctx); err != nil {
 			return nil, fmt.Errorf("re-login falhou: %w", err)
 		}
@@ -197,17 +197,17 @@ func (c *CIALAClient) LookupIMO(ctx context.Context, imo string) (*CIALAResult, 
 
 	imoCount := doc.Find("input[name='Imo']").Length()
 	rowCount := doc.Find("table tr").Length()
-	log.Printf("[ciala] resultado: %d linhas, %d inputs Imo", rowCount, imoCount)
+	slog.Info("resultado da busca", "component", "ciala", "linhas", rowCount, "inputs_imo", imoCount)
 
 	result := parseCIALAResults(doc, imo)
 	if result == nil {
 		// Navio não encontrado na base do CIALA — registra como "not_found"
 		// para distinguir de "ainda não consultado" (risk_level NULL).
-		log.Printf("[ciala] IMO %s não encontrado no CIALA — registrando como not_found", imo)
+		slog.Info("IMO não encontrado no CIALA — registrando como not_found", "component", "ciala", "imo", imo)
 		return &CIALAResult{RiskLevel: "not_found"}, nil
 	}
 
-	log.Printf("[ciala] IMO %s → risco=%q inspeção=%v bandeira=%q", imo, result.RiskLevel, result.LastInspectionDate, result.Flag)
+	slog.Info("resultado CIALA", "component", "ciala", "imo", imo, "risco", result.RiskLevel, "inspecao", result.LastInspectionDate, "bandeira", result.Flag)
 	return result, nil
 }
 
@@ -282,9 +282,9 @@ func parseCIALAResults(doc *goquery.Document, imo string) *CIALAResult {
 	}
 
 	// Log das células da linha para diagnóstico.
-	log.Printf("[ciala] linha encontrada para IMO %s:", imo)
+	slog.Info("linha encontrada", "component", "ciala", "imo", imo)
 	row.Find("td").Each(func(i int, td *goquery.Selection) {
-		log.Printf("[ciala]   td[%d]=%q", i, strings.TrimSpace(td.Text()))
+		slog.Info("célula da linha", "component", "ciala", "index", i, "valor", strings.TrimSpace(td.Text()))
 	})
 
 	result := &CIALAResult{}
@@ -294,7 +294,7 @@ func parseCIALAResults(doc *goquery.Document, imo string) *CIALAResult {
 	doc.Find("table thead th, table tr:first-child th").Each(func(_ int, th *goquery.Selection) {
 		headers = append(headers, strings.ToLower(strings.TrimSpace(th.Text())))
 	})
-	log.Printf("[ciala] cabeçalhos: %v", headers)
+	slog.Info("cabeçalhos da tabela", "component", "ciala", "headers", headers)
 
 	// Mapeia células da linha pelos cabeçalhos.
 	// Extrai células usando cellText (remove img, faz fallback em alt/title).
@@ -365,7 +365,7 @@ func parseCIALAResults(doc *goquery.Document, imo string) *CIALAResult {
 			if has(prevH, "embarcación", "embarcacion", "buque", "vessel", "navio") ||
 				has(nextH, "tipo", "type") {
 				result.Flag = v
-				log.Printf("[ciala] bandeira detectada por posição (col %d): %q", i, v)
+				slog.Info("bandeira detectada por posição", "component", "ciala", "col", i, "valor", v)
 				break
 			}
 		}

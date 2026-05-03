@@ -3,7 +3,7 @@ package vessel
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -51,7 +51,7 @@ func (f *IMOFinder) FindForVessel(c *gin.Context) {
 	imo, err := scraper.FindIMO(c.Request.Context(), f.vesselFinderURL, v.Name,
 		numericToFloat(v.LengthM), numericToFloat(v.BeamM))
 	if err != nil {
-		log.Printf("[imo] falha para %q: %v", v.Name, err)
+		slog.Error("falha ao buscar IMO", "component", "imo-handler", "vessel", v.Name, "error", err)
 		c.Redirect(http.StatusFound, "/vessels/"+strconv.FormatInt(id, 10)+
 			"?error="+url.QueryEscape("IMO não encontrado: "+err.Error()))
 		return
@@ -129,7 +129,7 @@ func (f *IMOFinder) BatchStream(c *gin.Context) {
 		imo, err := scraper.FindIMO(c.Request.Context(), f.vesselFinderURL, v.Name,
 			numericToFloat(v.LengthM), numericToFloat(v.BeamM))
 		if err != nil {
-			log.Printf("[imo-batch] %q: %v", v.Name, err)
+			slog.Error("falha ao buscar IMO em lote", "component", "imo-handler", "vessel", v.Name, "error", err)
 			send("fail", v.Name+"|"+err.Error())
 			failed++
 			continue

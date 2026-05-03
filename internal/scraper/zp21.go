@@ -4,7 +4,7 @@ package scraper
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"regexp"
@@ -71,7 +71,7 @@ func parseManobrasTable(doc *goquery.Document) []ManobrasRow {
 
 	table := doc.Find("table").First()
 	if table.Length() == 0 {
-		log.Println("[zp21] nenhuma tabela encontrada na página")
+		slog.Error("nenhuma tabela encontrada na página", "component", "zp21")
 		return rows
 	}
 
@@ -85,7 +85,7 @@ func parseManobrasTable(doc *goquery.Document) []ManobrasRow {
 		if i == 0 {
 			// Linha de cabeçalho — detecta quais colunas são quais.
 			cols = detectColumns(cells)
-			log.Printf("[zp21] colunas detectadas: %v | headers: %v", cols, cells)
+			slog.Info("colunas detectadas", "component", "zp21", "cols", cols, "headers", cells)
 			return
 		}
 
@@ -99,7 +99,7 @@ func parseManobrasTable(doc *goquery.Document) []ManobrasRow {
 		}
 	})
 
-	log.Printf("[zp21] %d linhas encontradas na tabela", len(rows))
+	slog.Info("linhas encontradas na tabela", "component", "zp21", "total", len(rows))
 	return rows
 }
 

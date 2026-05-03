@@ -2,7 +2,7 @@ package scheduler
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -50,6 +50,6 @@ func RecordRun(ctx context.Context, q *dbsqlc.Queries, scraperName string, start
 		ItemsFailed:    int32(failed),
 		ErrorMessage:   errMsg,
 	}); err != nil {
-		log.Printf("[metrics] erro ao registrar run de %s: %v", scraperName, err)
+		slog.Error("erro ao registrar run", "component", "metrics", "scraper", scraperName, "error", err)
 	}
 }

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +18,7 @@ import (
 	"github.com/marcusteixeirabr/psc-gvi/internal/inspection"
 	dbsqlc "github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
 	"github.com/marcusteixeirabr/psc-gvi/internal/health"
+	"github.com/marcusteixeirabr/psc-gvi/internal/logger"
 	"github.com/marcusteixeirabr/psc-gvi/internal/portcall"
 	"github.com/marcusteixeirabr/psc-gvi/internal/report"
 	"github.com/marcusteixeirabr/psc-gvi/internal/scheduler"
@@ -31,23 +32,27 @@ func main() {
 	// para qualquer hora entre 21h00 e 23h59 SP (= dia seguinte em UTC).
 	spLoc, err := time.LoadLocation("America/Sao_Paulo")
 	if err != nil {
-		log.Fatal("ERRO ao carregar timezone America/Sao_Paulo: ", err)
+		slog.Error("ERRO ao carregar timezone America/Sao_Paulo", "error", err)
+		os.Exit(1)
 	}
 	time.Local = spLoc
 
 	// ── 1. Configuração ────────────────────────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal("ERRO de configuração: ", err)
+		slog.Error("erro de configuração", "error", err)
+		os.Exit(1)
 	}
+	logger.Init(cfg.Env)
 
 	// ── 2. Banco de dados ──────────────────────────────────────────────────
 	pool, err := db.New(cfg.DSN())
 	if err != nil {
-		log.Fatal("ERRO ao conectar ao banco de dados: ", err)
+		slog.Error("erro ao conectar ao banco de dados", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
-	log.Println("Conectado ao PostgreSQL com sucesso.")
+	slog.Info("conectado ao PostgreSQL")
 
 	// ── 3. Queries (sqlc) ──────────────────────────────────────────────────
 	queries := dbsqlc.New(pool)
@@ -183,15 +188,16 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("Servidor iniciado em http://localhost:%s (env: %s)\n", cfg.Port, cfg.Env)
+		slog.Info("servidor iniciado", "addr", "http://localhost:"+cfg.Port, "env", cfg.Env)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("ERRO ao iniciar servidor: ", err)
+			slog.Error("erro ao iniciar servidor", "error", err)
+			os.Exit(1)
 		}
 	}()
 
 	// Aguarda sinal de encerramento.
 	<-quit
-	log.Println("Encerrando servidor...")
+	slog.Info("encerrando servidor")
 
 	// Para o scheduler antes de fechar o servidor.
 	sched.Stop()
@@ -200,8 +206,8 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("Shutdown forçado: %v", err)
+		slog.Error("shutdown forçado", "error", err)
 	}
 
-	log.Println("Servidor encerrado.")
+	slog.Info("servidor encerrado")
 }

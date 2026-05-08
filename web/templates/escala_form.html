@@ -36,7 +36,7 @@
 {{template "nav" .}}
 <div class="container">
   <h1>Editar Escala</h1>
-  <div class="sub">ID #{{.ID}} · todas as alterações são salvas imediatamente</div>
+  <div class="sub">{{.VesselName}} · todas as alterações são salvas imediatamente</div>
 
   {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 
@@ -51,14 +51,27 @@
 
       <div class="row">
         <div class="field">
-          <label>Prev. Chegada (ETA)</label>
+          <label>Prev. Chegada (ETA) — Data</label>
           <input type="date" name="eta_date"
                  value="{{if .PC.EtaDate.Valid}}{{.PC.EtaDate.Time.Format "2006-01-02"}}{{end}}">
         </div>
         <div class="field">
-          <label>Prev. Saída (ETD)</label>
+          <label>Prev. Chegada (ETA) — Hora</label>
+          <input type="time" name="eta_time" value="{{.EtaTimeStr}}">
+          <p class="hint">Deixe em branco se a hora for TBC</p>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Prev. Saída (ETD) — Data</label>
           <input type="date" name="etd_date"
                  value="{{if .PC.EtdDate.Valid}}{{.PC.EtdDate.Time.Format "2006-01-02"}}{{end}}">
+        </div>
+        <div class="field">
+          <label>Prev. Saída (ETD) — Hora</label>
+          <input type="time" name="etd_time" value="{{.EtdTimeStr}}">
+          <p class="hint">Deixe em branco se a hora for TBC</p>
         </div>
       </div>
 
@@ -85,6 +98,33 @@
           <option value="completed" {{if eq .PC.PortCallStatus "completed"}}selected{{end}}>Concluída</option>
           <option value="aborted"   {{if eq .PC.PortCallStatus "aborted"}}selected{{end}}>Cancelada</option>
         </select>
+      </div>
+
+      <hr class="sep">
+
+      <div class="row">
+        <div class="field">
+          <label>Risco (snapshot)</label>
+          <select name="risk_level_snapshot">
+            <option value="" {{if not .PC.RiskLevelSnapshot}}selected{{end}}>— sem snapshot —</option>
+            <option value="high"      {{if eq (derefStr .PC.RiskLevelSnapshot) "high"}}selected{{end}}>Alto</option>
+            <option value="standard"  {{if eq (derefStr .PC.RiskLevelSnapshot) "standard"}}selected{{end}}>Padrão</option>
+            <option value="low"       {{if eq (derefStr .PC.RiskLevelSnapshot) "low"}}selected{{end}}>Baixo</option>
+            <option value="not_found" {{if eq (derefStr .PC.RiskLevelSnapshot) "not_found"}}selected{{end}}>Sem reg. CIALA</option>
+          </select>
+          <p class="hint">Estado de risco registrado na conclusão da escala</p>
+        </div>
+        <div class="field">
+          <label>Prioridade (snapshot)</label>
+          <select name="priority_snapshot">
+            <option value="" {{if not .PC.PrioritySnapshot}}selected{{end}}>— sem snapshot —</option>
+            <option value="P1" {{if eq (derefStr .PC.PrioritySnapshot) "P1"}}selected{{end}}>P1 — Alta</option>
+            <option value="P2" {{if eq (derefStr .PC.PrioritySnapshot) "P2"}}selected{{end}}>P2 — Atenção</option>
+            <option value="P3" {{if eq (derefStr .PC.PrioritySnapshot) "P3"}}selected{{end}}>P3 — Normal</option>
+            <option value="N/D" {{if eq (derefStr .PC.PrioritySnapshot) "N/D"}}selected{{end}}>N/D — Sem dados</option>
+          </select>
+          <p class="hint">Prioridade registrada na conclusão da escala</p>
+        </div>
       </div>
 
       <div class="actions">

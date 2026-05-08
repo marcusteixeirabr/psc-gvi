@@ -71,7 +71,7 @@
 {{template "nav" .}}
 <div class="container">
   <h1>Relatório Mensal — {{.MesLabel}}</h1>
-  <div class="sub">Escalas que tocaram o porto no mês · navios acompanhados</div>
+  <div class="sub">Navios que atracaram no mês</div>
 
   {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 
@@ -95,7 +95,7 @@
     <div class="kpi-card">
       <div class="kpi-label">Total no porto</div>
       <div class="kpi-value">{{.KPI.TotalPorto}}</div>
-      <div class="kpi-sub">navios acompanhados</div>
+      <div class="kpi-sub">navios atracados</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Estrangeiros</div>

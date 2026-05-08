@@ -85,8 +85,12 @@ SET eta_date  = $2,
 WHERE id = $1;
 
 -- name: ListDashboardEntries :many
--- Retorna navios mercantes (ou sem categoria) com port calls ativos.
--- NULL category aparece para alertar que o cadastro precisa ser completado.
+-- Retorna navios acompanhados com port calls ativos para avaliação no dashboard.
+-- Regra de exibição (aplicada no handler Go):
+--   • Estrangeiros não afretados: sempre incluídos (filtro de prioridade no handler).
+--   • Nacionais (brasil/brazil) e afretados: incluídos apenas se tiverem
+--     deficiências CIALA registradas — sem inspeção na escala atual.
+-- O filtro SQL inclui a segunda categoria para que o handler possa avaliá-la.
 -- Ordenado por data (ETA ou ETD) — inspetores decidem com base no horário disponível.
 SELECT
     v.id, v.name, v.imo, v.flag, v.length_m, v.beam_m, v.year_built,
@@ -108,9 +112,14 @@ FROM vessels v
 JOIN port_calls pc ON pc.vessel_id = v.id
 LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 WHERE v.acompanhado = TRUE
-  AND v.afretado = FALSE
-  AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil', 'brasil'))
   AND (pc.port_call_status = 'planned' OR pc.port_call_status = 'active')
+  AND (
+    -- Estrangeiros não afretados: sempre candidatos ao dashboard
+    (v.afretado = FALSE AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil', 'brasil')))
+    OR
+    -- Nacionais e afretados: apenas se tiverem deficiências CIALA (filtro fino no handler)
+    (v.last_inspection_deficiencies IS NOT NULL AND v.last_inspection_deficiencies != '')
+  )
 ORDER BY COALESCE(pc.eta_date, pc.etd_date) ASC NULLS LAST, v.name ASC;
 
 -- name: ReassignPortCalls :exec
@@ -212,14 +221,18 @@ FROM port_calls WHERE id = $1;
 -- Edição completa de uma escala pelo usuário.
 -- vessel_status é derivado automaticamente: actual_arrival preenchido → berthed, senão navigating.
 UPDATE port_calls
-SET terminal         = $2,
-    eta_date         = $3,
-    etd_date         = $4,
-    actual_arrival   = $5,
-    actual_departure = $6,
-    port_call_status = $7,
-    vessel_status    = CASE WHEN $5::timestamptz IS NOT NULL THEN 'berthed' ELSE 'navigating' END,
-    updated_at       = NOW()
+SET terminal            = $2,
+    eta_date            = $3,
+    eta_time            = $4,
+    etd_date            = $5,
+    etd_time            = $6,
+    actual_arrival      = $7,
+    actual_departure    = $8,
+    port_call_status    = $9,
+    risk_level_snapshot = $10,
+    priority_snapshot   = $11,
+    vessel_status       = CASE WHEN $7::timestamptz IS NOT NULL THEN 'berthed' ELSE 'navigating' END,
+    updated_at          = NOW()
 WHERE id = $1;
 
 -- name: DeletePortCall :exec
@@ -291,13 +304,15 @@ WHERE id = $1;
 -- Estrangeiros não-afretados primeiro, ordenados pela primeira atracação do navio no período.
 -- Afretados e nacionais sempre por último.
 WITH period_vessels AS (
+    -- Apenas escalas com atracação registrada — planejadas ficam de fora.
     SELECT pc.id, pc.vessel_id,
-           COALESCE(pc.actual_arrival::date, pc.eta_date) AS arrival_date
+           pc.actual_arrival::date AS arrival_date
     FROM port_calls pc
     JOIN vessels v ON v.id = pc.vessel_id
     WHERE v.acompanhado = TRUE
-      AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(year)::int
-      AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(month)::int
+      AND pc.actual_arrival IS NOT NULL
+      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = sqlc.arg(year)::int
+      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = sqlc.arg(month)::int
 ),
 vessel_first_arrival AS (
     SELECT vessel_id, MIN(arrival_date) AS first_arrival
@@ -315,8 +330,9 @@ ranked AS (
         ins.id AS inspection_id, ins.result AS inspection_result, ins.inspection_date,
         vfa.first_arrival,
         ROW_NUMBER() OVER (
+            -- Última atracação real do navio no período (sem fallback para planejadas).
             PARTITION BY pc.vessel_id
-            ORDER BY COALESCE(pc.actual_arrival, pc.eta_date::timestamptz) DESC NULLS LAST
+            ORDER BY pc.actual_arrival DESC NULLS LAST
         ) AS rn
     FROM period_vessels pv
     JOIN port_calls pc ON pc.id = pv.id
@@ -333,10 +349,11 @@ SELECT id, vessel_id, terminal, eta_date, etd_date,
 FROM ranked
 WHERE rn = 1
 ORDER BY
+    -- Estrangeiros não afretados primeiro; brasileiros e afretados no final.
     CASE WHEN vessel_afretado = FALSE
               AND (vessel_flag IS NULL OR LOWER(TRIM(vessel_flag)) NOT IN ('brazil','brasil'))
          THEN 0 ELSE 1 END ASC,
-    first_arrival ASC NULLS LAST,
+    actual_arrival ASC NULLS LAST,
     vessel_name ASC;
 
 -- name: CountReportKPI :one
@@ -364,8 +381,9 @@ FROM port_calls pc
 JOIN vessels v ON v.id = pc.vessel_id
 LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 WHERE v.acompanhado = TRUE
-  AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(year)::int
-  AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = sqlc.arg(month)::int;
+  AND pc.actual_arrival IS NOT NULL
+  AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = sqlc.arg(year)::int
+  AND EXTRACT(MONTH FROM pc.actual_arrival::date) = sqlc.arg(month)::int;
 
 -- name: CountEscalas :one
 -- Conta escalas com os mesmos filtros de ListEscalas — usado para paginação.

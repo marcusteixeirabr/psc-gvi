@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,11 +42,13 @@ type Entry struct {
 	ETDTime          string
 	StatusLabel      string
 	IsBerthed        bool
-	Priority         vessel.Priority
-	PriorityLabel    string
-	Incomplete       bool
-	Inspected        bool
-	InspectionResult string
+	Priority      vessel.Priority
+	PriorityLabel string
+	Incomplete    bool
+	// LastInspectionDate: data da última inspeção PSC registrada no CIALA.
+	// Exibida na coluna "Inspeção" — o port call atual nunca tem inspeção visível
+	// porque o navio sai da view ao ser inspecionado.
+	LastInspectionDate string
 	// Deficiencies: texto de deficiências da última inspeção PSC (do CIALA).
 	// Regra futura: navio com deficiências sempre aparece no dashboard mesmo que P3.
 	Deficiencies string
@@ -109,14 +112,23 @@ func (h *Handler) Index(c *gin.Context) {
 
 		p := vessel.CalcPriority(r.RiskLevel, r.LastInspectionDate)
 		deficiencies := derefStr(r.LastInspectionDeficiencies)
+		hasDeficiencies := deficiencies != ""
+		hasCurrentInspection := r.InspectionID != nil
+		isEstrangeiroNaoAfretado := !r.Afretado && (r.Flag == nil || !isBrazilFlag(derefStr(r.Flag)))
 
-		// Filtro de prioridade:
-		// - P1 e P2: sempre aparecem
-		// - P3: só com deficiências registradas no CIALA
-		// - N/D (sem CIALA): aparece se estrangeiro + não afretado + controlado
-		//   (a query SQL já garante essas condições — não é necessário filtrar aqui)
-		if p == vessel.P3 && deficiencies == "" {
-			continue
+		if isEstrangeiroNaoAfretado {
+			// Estrangeiros não afretados: P3 sem deficiências não aparece.
+			// P1, P2 e qualquer navio com deficiências: aparecem.
+			if p == vessel.P3 && !hasDeficiencies {
+				continue
+			}
+		} else {
+			// Nacionais (Brasil/Brazil) e afretados: a exceção para aparecer no dashboard
+			// é ter deficiências registradas no CIALA E não ter inspeção na escala atual.
+			// Com inspeção na escala atual, o navio já foi tratado pelo GVI — sai da lista.
+			if !hasDeficiencies || hasCurrentInspection {
+				continue
+			}
 		}
 
 		seen[r.ID] = true
@@ -135,14 +147,13 @@ func (h *Handler) Index(c *gin.Context) {
 			ETATime:          fmtTime(r.EtaTime),
 			ETDDate:          fmtDate(r.EtdDate),
 			ETDTime:          fmtTime(r.EtdTime),
-			IsBerthed:        r.VesselStatus == "berthed",
-			StatusLabel:      simplifyStatus(r.VesselStatus),
-			Priority:         p,
-			PriorityLabel:    vessel.PriorityLabelFor(p),
-			Incomplete:       r.Flag == nil || r.RiskLevel == nil,
-			Inspected:        r.InspectionID != nil,
-			InspectionResult: inspectionResultLabel(r.InspectionResult),
-			Deficiencies:     deficiencies,
+			IsBerthed:          r.VesselStatus == "berthed",
+			StatusLabel:        simplifyStatus(r.VesselStatus),
+			Priority:           p,
+			PriorityLabel:      vessel.PriorityLabelFor(p),
+			Incomplete:         r.Flag == nil || r.RiskLevel == nil,
+			LastInspectionDate: fmtFullDate(r.LastInspectionDate),
+			Deficiencies:       deficiencies,
 		}
 		entries = append(entries, e)
 	}
@@ -195,22 +206,6 @@ func priorityOrder(p vessel.Priority) int {
 	return 3
 }
 
-// simplifyStatus converte o status técnico em rótulo simples para inspetores.
-func inspectionResultLabel(r *string) string {
-	if r == nil {
-		return ""
-	}
-	switch *r {
-	case "no_deficiencies":
-		return "Sem Deficiências"
-	case "deficiencies":
-		return "Com Deficiências"
-	case "detained":
-		return "Detido"
-	}
-	return *r
-}
-
 func simplifyStatus(s string) string {
 	if s == "berthed" {
 		return "Atracado"
@@ -243,6 +238,15 @@ func fmtDate(d pgtype.Date) string {
 	return d.Time.Format("02/01")
 }
 
+// fmtFullDate formata uma data com ano de 2 dígitos (ex: "15/03/24").
+// Usado para exibir a última inspeção PSC do CIALA, onde o ano é relevante.
+func fmtFullDate(d pgtype.Date) string {
+	if !d.Valid {
+		return ""
+	}
+	return d.Time.Format("02/01/06")
+}
+
 func fmtTime(t pgtype.Time) string {
 	if !t.Valid {
 		return "TBC"
@@ -266,6 +270,12 @@ func isOld(yearBuilt *int32) bool {
 		return false
 	}
 	return time.Now().Year()-int(*yearBuilt) >= 30
+}
+
+// isBrazilFlag reporta se a bandeira corresponde ao Brasil (aceita "Brazil" ou "Brasil").
+func isBrazilFlag(flag string) bool {
+	f := strings.ToLower(strings.TrimSpace(flag))
+	return f == "brazil" || f == "brasil"
 }
 
 func ptMonthName(m time.Month) string {

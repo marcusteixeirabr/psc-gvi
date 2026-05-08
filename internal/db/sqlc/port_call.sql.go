@@ -404,9 +404,12 @@ FROM vessels v
 JOIN port_calls pc ON pc.vessel_id = v.id
 LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 WHERE v.acompanhado = TRUE
-  AND v.afretado = FALSE
-  AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil', 'brasil'))
   AND (pc.port_call_status = 'planned' OR pc.port_call_status = 'active')
+  AND (
+    (v.afretado = FALSE AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil', 'brasil')))
+    OR
+    (v.last_inspection_deficiencies IS NOT NULL AND v.last_inspection_deficiencies != '')
+  )
 ORDER BY COALESCE(pc.eta_date, pc.etd_date) ASC NULLS LAST, v.name ASC
 `
 
@@ -856,25 +859,33 @@ func (q *Queries) UpdatePortCallETD(ctx context.Context, arg UpdatePortCallETDPa
 
 const updatePortCallFull = `-- name: UpdatePortCallFull :exec
 UPDATE port_calls
-SET terminal         = $2,
-    eta_date         = $3,
-    etd_date         = $4,
-    actual_arrival   = $5,
-    actual_departure = $6,
-    port_call_status = $7,
-    vessel_status    = CASE WHEN $5::timestamptz IS NOT NULL THEN 'berthed' ELSE 'navigating' END,
-    updated_at       = NOW()
+SET terminal            = $2,
+    eta_date            = $3,
+    eta_time            = $4,
+    etd_date            = $5,
+    etd_time            = $6,
+    actual_arrival      = $7,
+    actual_departure    = $8,
+    port_call_status    = $9,
+    risk_level_snapshot = $10,
+    priority_snapshot   = $11,
+    vessel_status       = CASE WHEN $7::timestamptz IS NOT NULL THEN 'berthed' ELSE 'navigating' END,
+    updated_at          = NOW()
 WHERE id = $1
 `
 
 type UpdatePortCallFullParams struct {
-	ID              int64              `json:"id"`
-	Terminal        *string            `json:"terminal"`
-	EtaDate         pgtype.Date        `json:"eta_date"`
-	EtdDate         pgtype.Date        `json:"etd_date"`
-	ActualArrival   pgtype.Timestamptz `json:"actual_arrival"`
-	ActualDeparture pgtype.Timestamptz `json:"actual_departure"`
-	PortCallStatus  string             `json:"port_call_status"`
+	ID                int64              `json:"id"`
+	Terminal          *string            `json:"terminal"`
+	EtaDate           pgtype.Date        `json:"eta_date"`
+	EtaTime           pgtype.Time        `json:"eta_time"`
+	EtdDate           pgtype.Date        `json:"etd_date"`
+	EtdTime           pgtype.Time        `json:"etd_time"`
+	ActualArrival     pgtype.Timestamptz `json:"actual_arrival"`
+	ActualDeparture   pgtype.Timestamptz `json:"actual_departure"`
+	PortCallStatus    string             `json:"port_call_status"`
+	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
+	PrioritySnapshot  *string            `json:"priority_snapshot"`
 }
 
 // Edição completa de uma escala pelo usuário.
@@ -883,10 +894,14 @@ func (q *Queries) UpdatePortCallFull(ctx context.Context, arg UpdatePortCallFull
 		arg.ID,
 		arg.Terminal,
 		arg.EtaDate,
+		arg.EtaTime,
 		arg.EtdDate,
+		arg.EtdTime,
 		arg.ActualArrival,
 		arg.ActualDeparture,
 		arg.PortCallStatus,
+		arg.RiskLevelSnapshot,
+		arg.PrioritySnapshot,
 	)
 	return err
 }
@@ -894,12 +909,13 @@ func (q *Queries) UpdatePortCallFull(ctx context.Context, arg UpdatePortCallFull
 const listReportEntries = `-- name: ListReportEntries :many
 WITH period_vessels AS (
     SELECT pc.id, pc.vessel_id,
-           COALESCE(pc.actual_arrival::date, pc.eta_date) AS arrival_date
+           pc.actual_arrival::date AS arrival_date
     FROM port_calls pc
     JOIN vessels v ON v.id = pc.vessel_id
     WHERE v.acompanhado = TRUE
-      AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = $1::int
-      AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = $2::int
+      AND pc.actual_arrival IS NOT NULL
+      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
+      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
 ),
 vessel_first_arrival AS (
     SELECT vessel_id, MIN(arrival_date) AS first_arrival
@@ -919,7 +935,7 @@ ranked AS (
         vfa.first_arrival,
         ROW_NUMBER() OVER (
             PARTITION BY pc.vessel_id
-            ORDER BY COALESCE(pc.actual_arrival, pc.eta_date::timestamptz) DESC NULLS LAST
+            ORDER BY pc.actual_arrival DESC NULLS LAST
         ) AS rn
     FROM period_vessels pv
     JOIN port_calls pc ON pc.id = pv.id
@@ -939,7 +955,7 @@ ORDER BY
     CASE WHEN vessel_afretado = FALSE
               AND (vessel_flag IS NULL OR LOWER(TRIM(vessel_flag)) NOT IN ('brazil','brasil'))
          THEN 0 ELSE 1 END ASC,
-    first_arrival ASC NULLS LAST,
+    actual_arrival ASC NULLS LAST,
     vessel_name ASC
 `
 
@@ -1031,8 +1047,9 @@ FROM port_calls pc
 JOIN vessels v ON v.id = pc.vessel_id
 LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 WHERE v.acompanhado = TRUE
-  AND EXTRACT(YEAR  FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = $1::int
-  AND EXTRACT(MONTH FROM COALESCE(pc.actual_arrival::date, pc.actual_departure::date, pc.eta_date)) = $2::int
+  AND pc.actual_arrival IS NOT NULL
+  AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
+  AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
 `
 
 type CountReportKPIParams struct {

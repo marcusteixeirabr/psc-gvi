@@ -140,7 +140,7 @@ func (h *EscalaHandler) List(c *gin.Context) {
 	now := time.Now()
 
 	statusFilter := c.DefaultQuery("status", "")
-	monthStr := c.DefaultQuery("mes", fmt.Sprintf("%d-%02d", now.Year(), now.Month()))
+	monthStr := c.DefaultQuery("mes", "") // "" = todos os meses
 	year, month := parseYearMonth(monthStr)
 
 	vesselIDStr := c.DefaultQuery("vessel_id", "0")
@@ -277,11 +277,20 @@ func (h *EscalaHandler) EditForm(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/escalas")
 		return
 	}
+	v, err := h.q.GetVessel(c.Request.Context(), pc.VesselID)
+	if err != nil {
+		c.Redirect(http.StatusFound, "/escalas")
+		return
+	}
 	c.HTML(http.StatusOK, "escala_form.html", gin.H{
-		"User":   auth.GetUser(c),
-		"PC":     pc,
-		"ID":     id,
-		"Error":  c.Query("error"),
+		"User":       auth.GetUser(c),
+		"PC":         pc,
+		"ID":         id,
+		"VesselName": v.Name,
+		"Error":      c.Query("error"),
+		// Horários pré-formatados para input[type=time] (HH:MM ou "")
+		"EtaTimeStr": fmtPgTime(pc.EtaTime),
+		"EtdTimeStr": fmtPgTime(pc.EtdTime),
 	})
 }
 
@@ -296,22 +305,30 @@ func (h *EscalaHandler) EditSave(c *gin.Context) {
 	}
 
 	etaDate   := parsePgDateOptional(c.PostForm("eta_date"))
+	etaTime   := parsePgTimeOptional(c.PostForm("eta_time"))
 	etdDate   := parsePgDateOptional(c.PostForm("etd_date"))
+	etdTime   := parsePgTimeOptional(c.PostForm("etd_time"))
 	arrivalTS := parseTsOptional(c.PostForm("actual_arrival"))
 	departTS  := parseTsOptional(c.PostForm("actual_departure"))
 	status    := c.PostForm("port_call_status")
 	if status == "" {
 		status = "planned"
 	}
+	riskSnap := nullableStr(c.PostForm("risk_level_snapshot"))
+	prioSnap := nullableStr(c.PostForm("priority_snapshot"))
 
 	if err := h.q.UpdatePortCallFull(c.Request.Context(), sqlc.UpdatePortCallFullParams{
-		ID:              id,
-		Terminal:        terminal,
-		EtaDate:         etaDate,
-		EtdDate:         etdDate,
-		ActualArrival:   arrivalTS,
-		ActualDeparture: departTS,
-		PortCallStatus:  status,
+		ID:                id,
+		Terminal:          terminal,
+		EtaDate:           etaDate,
+		EtaTime:           etaTime,
+		EtdDate:           etdDate,
+		EtdTime:           etdTime,
+		ActualArrival:     arrivalTS,
+		ActualDeparture:   departTS,
+		PortCallStatus:    status,
+		RiskLevelSnapshot: riskSnap,
+		PrioritySnapshot:  prioSnap,
 	}); err != nil {
 		c.Redirect(http.StatusFound, fmt.Sprintf("/escalas/%d/edit?error=%s",
 			id, url.QueryEscape("Erro ao salvar: "+err.Error())))
@@ -614,11 +631,55 @@ func referer(c *gin.Context, fallback string) string {
 	return ref + "&"
 }
 
+// fmtPgTime formata pgtype.Time como "HH:MM" para input[type=time].
+func fmtPgTime(t pgtype.Time) string {
+	if !t.Valid {
+		return ""
+	}
+	total := t.Microseconds / 1_000_000
+	h := total / 3600
+	m := (total % 3600) / 60
+	return fmt.Sprintf("%02d:%02d", h, m)
+}
+
+// parsePgTimeOptional converte "HH:MM" em pgtype.Time (microsegundos desde meia-noite).
+func parsePgTimeOptional(s string) pgtype.Time {
+	var t pgtype.Time
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return t
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 {
+		return t
+	}
+	h, err1 := strconv.Atoi(parts[0])
+	m, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return t
+	}
+	t.Microseconds = int64(h*3600+m*60) * 1_000_000
+	t.Valid = true
+	return t
+}
+
+// nullableStr retorna nil se a string for vazia, ou um ponteiro para ela.
+func nullableStr(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 func parseYearMonth(s string) (int, int) {
+	// String vazia = "todos os meses" → year=0, month=0 passa pelo filtro SQL sem restrição.
+	if s == "" {
+		return 0, 0
+	}
 	parts := strings.Split(s, "-")
 	if len(parts) != 2 {
-		now := time.Now()
-		return now.Year(), int(now.Month())
+		return 0, 0
 	}
 	y, _ := strconv.Atoi(parts[0])
 	m, _ := strconv.Atoi(parts[1])

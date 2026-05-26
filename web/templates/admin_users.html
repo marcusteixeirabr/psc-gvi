@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usuários — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; }
+    .container { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.4rem; color: #1a202c; margin-bottom: 0.25rem; }
+    .sub { font-size: 0.82rem; color: #718096; margin-bottom: 1.5rem; }
+
+    .flash { background: #c6f6d5; color: #276749; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
+    .error { background: #fed7d7; color: #c53030; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); overflow: hidden; font-size: 0.85rem; }
+    th { background: #edf2f7; text-align: left; padding: 0.55rem 0.9rem; font-size: 0.72rem; color: #4a5568; text-transform: uppercase; letter-spacing: 0.05em; }
+    td { padding: 0.6rem 0.9rem; border-bottom: 1px solid #edf2f7; color: #2d3748; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f7fafc; }
+
+    .badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .badge-admin  { background: #ebf4ff; color: #2b6cb0; }
+    .badge-editor { background: #fef3c7; color: #92400e; }
+    .badge-reader { background: #f0fff4; color: #276749; }
+    .badge-off    { background: #edf2f7; color: #718096; }
+
+    .status-on  { color: #38a169; font-weight: 600; }
+    .status-off { color: #a0aec0; }
+
+    .back { display: inline-block; margin-bottom: 1.25rem; font-size: 0.82rem; color: #4a5568; text-decoration: none; }
+    .back:hover { color: #2d3748; }
+  </style>
+</head>
+<body>
+  {{template "nav" .}}
+  <div class="container">
+    <a href="/admin/health" class="back">← Saúde do sistema</a>
+    <h1>Usuários</h1>
+    <p class="sub">Contas registradas no sistema</p>
+
+    {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+    {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Usuário</th>
+          <th>Nome</th>
+          <th>Papel</th>
+          <th>Status</th>
+          <th>Criado em</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Users}}
+        <tr>
+          <td>{{.ID}}</td>
+          <td><strong>{{.Username}}</strong></td>
+          <td>{{.DisplayName}}</td>
+          <td>
+            {{if eq .Role "admin"}}
+              <span class="badge badge-admin">{{.RoleLabel}}</span>
+            {{else if eq .Role "editor"}}
+              <span class="badge badge-editor">{{.RoleLabel}}</span>
+            {{else}}
+              <span class="badge badge-reader">{{.RoleLabel}}</span>
+            {{end}}
+          </td>
+          <td>
+            {{if .Active}}
+              <span class="status-on">Ativo</span>
+            {{else}}
+              <span class="status-off">Inativo</span>
+            {{end}}
+          </td>
+          <td>{{.CreatedAt}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

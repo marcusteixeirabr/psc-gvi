@@ -22,6 +22,7 @@ import (
 	"github.com/marcusteixeirabr/psc-gvi/internal/portcall"
 	"github.com/marcusteixeirabr/psc-gvi/internal/report"
 	"github.com/marcusteixeirabr/psc-gvi/internal/scheduler"
+	"github.com/marcusteixeirabr/psc-gvi/internal/user"
 	"github.com/marcusteixeirabr/psc-gvi/internal/vessel"
 )
 
@@ -116,6 +117,7 @@ func main() {
 	if alerter != nil {
 		healthHandler = healthHandler.WithMailer(alerter)
 	}
+	userHandler := user.NewHandler(pool)
 
 	// ── Rotas protegidas ───────────────────────────────────────────────────
 	protected := router.Group("/")
@@ -174,6 +176,7 @@ func main() {
 			admins.POST("/vessels/:id/merge", vesselHandler.MergeVessel)
 			admins.GET("/admin/health", healthHandler.Show)
 			admins.POST("/admin/health/test-email", healthHandler.TestEmail)
+			admins.GET("/admin/users", userHandler.List)
 		}
 	}
 

@@ -153,6 +153,6 @@ SELECT * FROM vessels WHERE acompanhado = TRUE ORDER BY name LIMIT 50 OFFSET $1;
 -- Busca navios por nome (parcial, case-insensitive) ou IMO (exato).
 SELECT * FROM vessels
 WHERE acompanhado = TRUE
-  AND (name ILIKE $1 OR imo = $2)
+  AND (name ILIKE sqlc.arg(name_pattern) OR imo = sqlc.arg(imo))
 ORDER BY name
 LIMIT 20;

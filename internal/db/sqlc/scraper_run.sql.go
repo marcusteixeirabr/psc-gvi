@@ -11,7 +11,83 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countConsecutiveErrors = `-- name: CountConsecutiveErrors :one
+SELECT COUNT(*)::int FROM (
+    SELECT status FROM scraper_runs
+    WHERE scraper = $1
+    ORDER BY started_at DESC
+    LIMIT 10
+) recent
+WHERE status = 'error'
+`
+
+// Conta falhas consecutivas mais recentes para um scraper.
+// Retorna o número de execuções com status='error' no início da sequência mais recente.
+func (q *Queries) CountConsecutiveErrors(ctx context.Context, scraper string) (int32, error) {
+	row := q.db.QueryRow(ctx, countConsecutiveErrors, scraper)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countZP21SilentCycles = `-- name: CountZP21SilentCycles :one
+SELECT COUNT(*)::int FROM (
+    SELECT rows_found FROM scraper_runs
+    WHERE scraper = 'zp21'
+    ORDER BY started_at DESC
+    LIMIT 3
+) last3
+WHERE rows_found = 0
+`
+
+// Conta quantas das últimas 3 execuções do zp21 retornaram 0 navios.
+func (q *Queries) CountZP21SilentCycles(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countZP21SilentCycles)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const getLatestRunPerScraper = `-- name: GetLatestRunPerScraper :many
+SELECT DISTINCT ON (scraper) id, scraper, started_at, finished_at, duration_ms, status, rows_found, items_processed, items_failed, error_message
+FROM scraper_runs
+ORDER BY scraper, started_at DESC
+`
+
+// Última execução de cada scraper conhecido, mais recente primeiro.
+func (q *Queries) GetLatestRunPerScraper(ctx context.Context) ([]ScraperRun, error) {
+	rows, err := q.db.Query(ctx, getLatestRunPerScraper)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScraperRun{}
+	for rows.Next() {
+		var i ScraperRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.Scraper,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.DurationMs,
+			&i.Status,
+			&i.RowsFound,
+			&i.ItemsProcessed,
+			&i.ItemsFailed,
+			&i.ErrorMessage,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertScraperRun = `-- name: InsertScraperRun :exec
+
 INSERT INTO scraper_runs (scraper, started_at, finished_at, duration_ms, status,
                           rows_found, items_processed, items_failed, error_message)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -29,82 +105,20 @@ type InsertScraperRunParams struct {
 	ErrorMessage   *string            `json:"error_message"`
 }
 
+// Queries para scraper_runs — histórico de execuções do scheduler.
 func (q *Queries) InsertScraperRun(ctx context.Context, arg InsertScraperRunParams) error {
 	_, err := q.db.Exec(ctx, insertScraperRun,
-		arg.Scraper, arg.StartedAt, arg.FinishedAt, arg.DurationMs, arg.Status,
-		arg.RowsFound, arg.ItemsProcessed, arg.ItemsFailed, arg.ErrorMessage,
+		arg.Scraper,
+		arg.StartedAt,
+		arg.FinishedAt,
+		arg.DurationMs,
+		arg.Status,
+		arg.RowsFound,
+		arg.ItemsProcessed,
+		arg.ItemsFailed,
+		arg.ErrorMessage,
 	)
 	return err
-}
-
-const listRecentScraperRuns = `-- name: ListRecentScraperRuns :many
-SELECT id, scraper, started_at, finished_at, duration_ms, status, rows_found, items_processed, items_failed, error_message FROM scraper_runs
-WHERE scraper = $1
-ORDER BY started_at DESC
-LIMIT 50
-`
-
-func (q *Queries) ListRecentScraperRuns(ctx context.Context, scraper string) ([]ScraperRun, error) {
-	rows, err := q.db.Query(ctx, listRecentScraperRuns, scraper)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ScraperRun{}
-	for rows.Next() {
-		var i ScraperRun
-		if err := rows.Scan(
-			&i.ID, &i.Scraper, &i.StartedAt, &i.FinishedAt, &i.DurationMs,
-			&i.Status, &i.RowsFound, &i.ItemsProcessed, &i.ItemsFailed, &i.ErrorMessage,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
-}
-
-const countConsecutiveErrors = `-- name: CountConsecutiveErrors :one
-SELECT COUNT(*)::int FROM (
-    SELECT status FROM scraper_runs
-    WHERE scraper = $1
-    ORDER BY started_at DESC
-    LIMIT 10
-) recent
-WHERE status = 'error'
-`
-
-func (q *Queries) CountConsecutiveErrors(ctx context.Context, scraper string) (int32, error) {
-	row := q.db.QueryRow(ctx, countConsecutiveErrors, scraper)
-	var count int32
-	err := row.Scan(&count)
-	return count, err
-}
-
-const getLatestRunPerScraper = `-- name: GetLatestRunPerScraper :many
-SELECT DISTINCT ON (scraper) id, scraper, started_at, finished_at, duration_ms, status, rows_found, items_processed, items_failed, error_message
-FROM scraper_runs
-ORDER BY scraper, started_at DESC
-`
-
-func (q *Queries) GetLatestRunPerScraper(ctx context.Context) ([]ScraperRun, error) {
-	rows, err := q.db.Query(ctx, getLatestRunPerScraper)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ScraperRun{}
-	for rows.Next() {
-		var i ScraperRun
-		if err := rows.Scan(
-			&i.ID, &i.Scraper, &i.StartedAt, &i.FinishedAt, &i.DurationMs,
-			&i.Status, &i.RowsFound, &i.ItemsProcessed, &i.ItemsFailed, &i.ErrorMessage,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
 }
 
 const listRecentRuns = `-- name: ListRecentRuns :many
@@ -113,6 +127,7 @@ ORDER BY started_at DESC
 LIMIT 20
 `
 
+// Últimas 20 execuções de todos os scrapers, ordenadas por data desc.
 func (q *Queries) ListRecentRuns(ctx context.Context) ([]ScraperRun, error) {
 	rows, err := q.db.Query(ctx, listRecentRuns)
 	if err != nil {
@@ -123,29 +138,62 @@ func (q *Queries) ListRecentRuns(ctx context.Context) ([]ScraperRun, error) {
 	for rows.Next() {
 		var i ScraperRun
 		if err := rows.Scan(
-			&i.ID, &i.Scraper, &i.StartedAt, &i.FinishedAt, &i.DurationMs,
-			&i.Status, &i.RowsFound, &i.ItemsProcessed, &i.ItemsFailed, &i.ErrorMessage,
+			&i.ID,
+			&i.Scraper,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.DurationMs,
+			&i.Status,
+			&i.RowsFound,
+			&i.ItemsProcessed,
+			&i.ItemsFailed,
+			&i.ErrorMessage,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const countZP21SilentCycles = `-- name: CountZP21SilentCycles :one
-SELECT COUNT(*)::int FROM (
-    SELECT rows_found FROM scraper_runs
-    WHERE scraper = 'zp21'
-    ORDER BY started_at DESC
-    LIMIT 3
-) last3
-WHERE rows_found = 0
+const listRecentScraperRuns = `-- name: ListRecentScraperRuns :many
+SELECT id, scraper, started_at, finished_at, duration_ms, status, rows_found, items_processed, items_failed, error_message FROM scraper_runs
+WHERE scraper = $1
+ORDER BY started_at DESC
+LIMIT 50
 `
 
-func (q *Queries) CountZP21SilentCycles(ctx context.Context) (int32, error) {
-	row := q.db.QueryRow(ctx, countZP21SilentCycles)
-	var count int32
-	err := row.Scan(&count)
-	return count, err
+// Últimas 50 execuções de um scraper específico, mais recentes primeiro.
+func (q *Queries) ListRecentScraperRuns(ctx context.Context, scraper string) ([]ScraperRun, error) {
+	rows, err := q.db.Query(ctx, listRecentScraperRuns, scraper)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ScraperRun{}
+	for rows.Next() {
+		var i ScraperRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.Scraper,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.DurationMs,
+			&i.Status,
+			&i.RowsFound,
+			&i.ItemsProcessed,
+			&i.ItemsFailed,
+			&i.ErrorMessage,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

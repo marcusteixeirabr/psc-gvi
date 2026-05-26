@@ -38,9 +38,14 @@ LIMIT 1;
 UPDATE port_calls SET last_zp21_seen_at = $2 WHERE id = $1;
 
 -- name: GetLastZP21ScrapeTime :one
--- Retorna o timestamp do ciclo de scraping mais recente.
+-- Retorna o timestamp do ciclo de scraping ZP-21 mais recente.
 -- Usado pelo dashboard para filtrar navios da última consulta.
-SELECT MAX(last_zp21_seen_at) FROM port_calls WHERE zp21_sourced = TRUE;
+SELECT last_zp21_seen_at
+FROM port_calls
+WHERE zp21_sourced = TRUE
+  AND last_zp21_seen_at IS NOT NULL
+ORDER BY last_zp21_seen_at DESC
+LIMIT 1;
 
 -- name: AbortStaleZP21PortCalls :exec
 -- Cancela escalas ZP-21 planejadas que não apareceram na última consulta.
@@ -357,48 +362,55 @@ ORDER BY
     vessel_name ASC;
 
 -- name: CountReportKPI :one
--- KPI do mês: totais para os cards do relatório.
--- total_porto   = todos os navios acompanhados com escala no mês
--- estrangeiros  = estrangeiros não-afretados
--- sujeitos      = estrangeiros com P1/P2 no snapshot OU já inspecionados (base do %)
+-- KPI do mês: cada navio conta uma única vez (última escala com atracação no período).
+-- total_porto   = navios únicos com atracação no mês
+-- estrangeiros  = estrangeiros não-afretados (únicos)
+-- sujeitos      = estrangeiros com P1/P2 no snapshot OU já inspecionados
 -- inspected     = estrangeiros com inspeção registrada
+WITH last_per_vessel AS (
+    SELECT DISTINCT ON (pc.vessel_id)
+        pc.id, pc.vessel_id, pc.priority_snapshot,
+        v.afretado AS vessel_afretado, v.flag AS vessel_flag
+    FROM port_calls pc
+    JOIN vessels v ON v.id = pc.vessel_id
+    WHERE v.acompanhado = TRUE
+      AND pc.actual_arrival IS NOT NULL
+      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = sqlc.arg(year)::int
+      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = sqlc.arg(month)::int
+    ORDER BY pc.vessel_id, pc.actual_arrival DESC
+)
 SELECT
-    COUNT(pc.id) AS total_porto,
-    COUNT(pc.id) FILTER (
-        WHERE v.afretado = FALSE
-          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+    COUNT(*) AS total_porto,
+    COUNT(*) FILTER (
+        WHERE lpv.vessel_afretado = FALSE
+          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
     ) AS estrangeiros,
-    COUNT(pc.id) FILTER (
-        WHERE v.afretado = FALSE
-          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
-          AND (pc.priority_snapshot IN ('P1','P2') OR ins.id IS NOT NULL)
+    COUNT(*) FILTER (
+        WHERE lpv.vessel_afretado = FALSE
+          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
+          AND (lpv.priority_snapshot IN ('P1','P2') OR ins.id IS NOT NULL)
     ) AS sujeitos,
     COUNT(ins.id) FILTER (
-        WHERE v.afretado = FALSE
-          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+        WHERE lpv.vessel_afretado = FALSE
+          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
     ) AS inspected
-FROM port_calls pc
-JOIN vessels v ON v.id = pc.vessel_id
-LEFT JOIN inspections ins ON ins.port_call_id = pc.id
-WHERE v.acompanhado = TRUE
-  AND pc.actual_arrival IS NOT NULL
-  AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = sqlc.arg(year)::int
-  AND EXTRACT(MONTH FROM pc.actual_arrival::date) = sqlc.arg(month)::int;
+FROM last_per_vessel lpv
+LEFT JOIN inspections ins ON ins.port_call_id = lpv.id;
 
 -- name: CountEscalas :one
 -- Conta escalas com os mesmos filtros de ListEscalas — usado para paginação.
 SELECT COUNT(*)::int
 FROM port_calls pc
 JOIN vessels v ON v.id = pc.vessel_id
-WHERE ($1::text = '' OR pc.port_call_status = $1::text)
-  AND ($2::bigint = 0 OR pc.vessel_id = $2::bigint)
-  AND ($3::int = 0
-       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $3::int)
-  AND ($4::int = 0
-       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $4::int);
+WHERE (sqlc.arg(status)::text = '' OR pc.port_call_status = sqlc.arg(status)::text)
+  AND (sqlc.arg(vessel_id)::bigint = 0 OR pc.vessel_id = sqlc.arg(vessel_id)::bigint)
+  AND (sqlc.arg(year)::int = 0
+       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(year)::int)
+  AND (sqlc.arg(month)::int = 0
+       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(month)::int);
 
 -- name: ListEscalasPaged :many
--- Lista escalas com paginação (LIMIT 50 OFFSET $5). NÃO modifica ListEscalas.
+-- Lista escalas com paginação (LIMIT 50 OFFSET). NÃO modifica ListEscalas.
 SELECT
     pc.id, pc.vessel_id, pc.terminal,
     pc.eta_date, pc.etd_date,
@@ -414,12 +426,12 @@ SELECT
 FROM port_calls pc
 JOIN vessels v ON v.id = pc.vessel_id
 LEFT JOIN inspections ins ON ins.port_call_id = pc.id
-WHERE ($1::text = '' OR pc.port_call_status = $1::text)
-  AND ($2::bigint = 0 OR pc.vessel_id = $2::bigint)
-  AND ($3::int = 0
-       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $3::int)
-  AND ($4::int = 0
-       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $4::int)
+WHERE (sqlc.arg(status)::text = '' OR pc.port_call_status = sqlc.arg(status)::text)
+  AND (sqlc.arg(vessel_id)::bigint = 0 OR pc.vessel_id = sqlc.arg(vessel_id)::bigint)
+  AND (sqlc.arg(year)::int = 0
+       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(year)::int)
+  AND (sqlc.arg(month)::int = 0
+       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(month)::int)
 ORDER BY COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date) ASC NULLS LAST,
          pc.created_at ASC
-LIMIT 50 OFFSET $5;
+LIMIT 50 OFFSET sqlc.arg(page_offset)::int;

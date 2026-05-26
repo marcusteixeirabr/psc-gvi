@@ -11,6 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countAllVessels = `-- name: CountAllVessels :one
+SELECT COUNT(*)::int FROM vessels
+`
+
+// Conta todos os navios (admin: inclui não-acompanhados).
+func (q *Queries) CountAllVessels(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countAllVessels)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countVessels = `-- name: CountVessels :one
+SELECT COUNT(*)::int FROM vessels WHERE acompanhado = TRUE
+`
+
+// Conta navios acompanhados para paginação.
+func (q *Queries) CountVessels(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, countVessels)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createVessel = `-- name: CreateVessel :one
 INSERT INTO vessels (imo, name, flag, year_built, vessel_type, length_m, beam_m, afretado)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -325,6 +349,57 @@ func (q *Queries) ListVessels(ctx context.Context) ([]Vessel, error) {
 	return items, nil
 }
 
+const listVesselsForAutoCIALA = `-- name: ListVesselsForAutoCIALA :many
+SELECT DISTINCT ON (v.id) v.id, v.imo, v.name, v.flag, v.year_built, v.vessel_type, v.length_m, v.beam_m, v.risk_level, v.last_inspection_date, v.created_at, v.updated_at, v.last_inspection_deficiencies, v.afretado, v.acompanhado, v.last_ciala_checked_at
+FROM vessels v
+JOIN port_calls pc ON pc.vessel_id = v.id
+WHERE v.imo IS NOT NULL
+  AND v.acompanhado = TRUE
+  AND (pc.port_call_status = 'planned' OR pc.port_call_status = 'active')
+  AND (v.last_ciala_checked_at IS NULL OR v.last_ciala_checked_at < pc.created_at)
+ORDER BY v.id, pc.created_at DESC
+`
+
+// Navios acompanhados com IMO e escala ativa cuja consulta CIALA está desatualizada.
+// Condição: last_ciala_checked_at IS NULL (nunca consultado) OU anterior à criação
+// da escala ativa mais recente (nova visita = nova consulta obrigatória).
+func (q *Queries) ListVesselsForAutoCIALA(ctx context.Context) ([]Vessel, error) {
+	rows, err := q.db.Query(ctx, listVesselsForAutoCIALA)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Vessel{}
+	for rows.Next() {
+		var i Vessel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Imo,
+			&i.Name,
+			&i.Flag,
+			&i.YearBuilt,
+			&i.VesselType,
+			&i.LengthM,
+			&i.BeamM,
+			&i.RiskLevel,
+			&i.LastInspectionDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastInspectionDeficiencies,
+			&i.Afretado,
+			&i.Acompanhado,
+			&i.LastCialaCheckedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVesselsForCIALA = `-- name: ListVesselsForCIALA :many
 SELECT id, imo, name, flag, year_built, vessel_type, length_m, beam_m, risk_level, last_inspection_date, created_at, updated_at, last_inspection_deficiencies, afretado, acompanhado, last_ciala_checked_at FROM vessels
 WHERE imo IS NOT NULL
@@ -337,6 +412,48 @@ ORDER BY name
 // Inclui nacionais e afretados (também aparecem no relatório mensal).
 func (q *Queries) ListVesselsForCIALA(ctx context.Context) ([]Vessel, error) {
 	rows, err := q.db.Query(ctx, listVesselsForCIALA)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Vessel{}
+	for rows.Next() {
+		var i Vessel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Imo,
+			&i.Name,
+			&i.Flag,
+			&i.YearBuilt,
+			&i.VesselType,
+			&i.LengthM,
+			&i.BeamM,
+			&i.RiskLevel,
+			&i.LastInspectionDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastInspectionDeficiencies,
+			&i.Afretado,
+			&i.Acompanhado,
+			&i.LastCialaCheckedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVesselsPaged = `-- name: ListVesselsPaged :many
+SELECT id, imo, name, flag, year_built, vessel_type, length_m, beam_m, risk_level, last_inspection_date, created_at, updated_at, last_inspection_deficiencies, afretado, acompanhado, last_ciala_checked_at FROM vessels WHERE acompanhado = TRUE ORDER BY name LIMIT 50 OFFSET $1
+`
+
+// Lista navios acompanhados com paginação.
+func (q *Queries) ListVesselsPaged(ctx context.Context, offset int32) ([]Vessel, error) {
+	rows, err := q.db.Query(ctx, listVesselsPaged, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -387,6 +504,57 @@ ORDER BY v.name
 // Candidatos para busca de IMO no VesselFinder.
 func (q *Queries) ListVesselsWithoutIMO(ctx context.Context) ([]Vessel, error) {
 	rows, err := q.db.Query(ctx, listVesselsWithoutIMO)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Vessel{}
+	for rows.Next() {
+		var i Vessel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Imo,
+			&i.Name,
+			&i.Flag,
+			&i.YearBuilt,
+			&i.VesselType,
+			&i.LengthM,
+			&i.BeamM,
+			&i.RiskLevel,
+			&i.LastInspectionDate,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastInspectionDeficiencies,
+			&i.Afretado,
+			&i.Acompanhado,
+			&i.LastCialaCheckedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchVessels = `-- name: SearchVessels :many
+SELECT id, imo, name, flag, year_built, vessel_type, length_m, beam_m, risk_level, last_inspection_date, created_at, updated_at, last_inspection_deficiencies, afretado, acompanhado, last_ciala_checked_at FROM vessels
+WHERE acompanhado = TRUE
+  AND (name ILIKE $1 OR imo = $2)
+ORDER BY name
+LIMIT 20
+`
+
+type SearchVesselsParams struct {
+	NamePattern string  `json:"name_pattern"`
+	Imo         *string `json:"imo"`
+}
+
+// Busca navios por nome (parcial, case-insensitive) ou IMO (exato).
+func (q *Queries) SearchVessels(ctx context.Context, arg SearchVesselsParams) ([]Vessel, error) {
+	rows, err := q.db.Query(ctx, searchVessels, arg.NamePattern, arg.Imo)
 	if err != nil {
 		return nil, err
 	}
@@ -531,6 +699,22 @@ func (q *Queries) UpdateVesselCIALA(ctx context.Context, arg UpdateVesselCIALAPa
 	return err
 }
 
+const updateVesselDimensions = `-- name: UpdateVesselDimensions :exec
+UPDATE vessels SET length_m = $2, beam_m = $3, updated_at = NOW() WHERE id = $1
+`
+
+type UpdateVesselDimensionsParams struct {
+	ID      int64          `json:"id"`
+	LengthM pgtype.Numeric `json:"length_m"`
+	BeamM   pgtype.Numeric `json:"beam_m"`
+}
+
+// Persiste LOA e Beam descobertos via VesselFinder.
+func (q *Queries) UpdateVesselDimensions(ctx context.Context, arg UpdateVesselDimensionsParams) error {
+	_, err := q.db.Exec(ctx, updateVesselDimensions, arg.ID, arg.LengthM, arg.BeamM)
+	return err
+}
+
 const updateVesselIMO = `-- name: UpdateVesselIMO :exec
 UPDATE vessels SET imo = $2, updated_at = NOW() WHERE id = $1 AND imo IS NULL
 `
@@ -547,18 +731,15 @@ func (q *Queries) UpdateVesselIMO(ctx context.Context, arg UpdateVesselIMOParams
 	return err
 }
 
-const updateVesselDimensions = `-- name: UpdateVesselDimensions :exec
-UPDATE vessels SET length_m = $2, beam_m = $3, updated_at = NOW() WHERE id = $1
+const updateVesselLastCIALACheck = `-- name: UpdateVesselLastCIALACheck :exec
+UPDATE vessels
+SET last_ciala_checked_at = NOW(), updated_at = NOW()
+WHERE id = $1
 `
 
-type UpdateVesselDimensionsParams struct {
-	ID      int64          `json:"id"`
-	LengthM pgtype.Numeric `json:"length_m"`
-	BeamM   pgtype.Numeric `json:"beam_m"`
-}
-
-func (q *Queries) UpdateVesselDimensions(ctx context.Context, arg UpdateVesselDimensionsParams) error {
-	_, err := q.db.Exec(ctx, updateVesselDimensions, arg.ID, arg.LengthM, arg.BeamM)
+// Registra o timestamp da última consulta CIALA bem-sucedida para o navio.
+func (q *Queries) UpdateVesselLastCIALACheck(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, updateVesselLastCIALACheck, id)
 	return err
 }
 
@@ -575,148 +756,4 @@ type UpdateVesselLastInspectionDateParams struct {
 func (q *Queries) UpdateVesselLastInspectionDate(ctx context.Context, arg UpdateVesselLastInspectionDateParams) error {
 	_, err := q.db.Exec(ctx, updateVesselLastInspectionDate, arg.ID, arg.LastInspectionDate)
 	return err
-}
-
-const listVesselsForAutoCIALA = `-- name: ListVesselsForAutoCIALA :many
-SELECT DISTINCT ON (v.id) v.id, v.imo, v.name, v.flag, v.year_built, v.vessel_type, v.length_m, v.beam_m, v.risk_level, v.last_inspection_date, v.created_at, v.updated_at, v.last_inspection_deficiencies, v.afretado, v.acompanhado, v.last_ciala_checked_at
-FROM vessels v
-JOIN port_calls pc ON pc.vessel_id = v.id
-WHERE v.imo IS NOT NULL
-  AND v.acompanhado = TRUE
-  AND (pc.port_call_status = 'planned' OR pc.port_call_status = 'active')
-  AND (v.last_ciala_checked_at IS NULL OR v.last_ciala_checked_at < pc.created_at)
-ORDER BY v.id, pc.created_at DESC
-`
-
-// Navios acompanhados com IMO e escala ativa cuja consulta CIALA está desatualizada.
-func (q *Queries) ListVesselsForAutoCIALA(ctx context.Context) ([]Vessel, error) {
-	rows, err := q.db.Query(ctx, listVesselsForAutoCIALA)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Vessel{}
-	for rows.Next() {
-		var i Vessel
-		if err := rows.Scan(
-			&i.ID,
-			&i.Imo,
-			&i.Name,
-			&i.Flag,
-			&i.YearBuilt,
-			&i.VesselType,
-			&i.LengthM,
-			&i.BeamM,
-			&i.RiskLevel,
-			&i.LastInspectionDate,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.LastInspectionDeficiencies,
-			&i.Afretado,
-			&i.Acompanhado,
-			&i.LastCialaCheckedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const updateVesselLastCIALACheck = `-- name: UpdateVesselLastCIALACheck :exec
-UPDATE vessels
-SET last_ciala_checked_at = NOW(), updated_at = NOW()
-WHERE id = $1
-`
-
-// Registra o timestamp da última consulta CIALA bem-sucedida para o navio.
-func (q *Queries) UpdateVesselLastCIALACheck(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, updateVesselLastCIALACheck, id)
-	return err
-}
-
-const countVessels = `-- name: CountVessels :one
-SELECT COUNT(*)::int FROM vessels WHERE acompanhado = TRUE
-`
-
-func (q *Queries) CountVessels(ctx context.Context) (int32, error) {
-	row := q.db.QueryRow(ctx, countVessels)
-	var count int32
-	err := row.Scan(&count)
-	return count, err
-}
-
-const countAllVessels = `-- name: CountAllVessels :one
-SELECT COUNT(*)::int FROM vessels
-`
-
-func (q *Queries) CountAllVessels(ctx context.Context) (int32, error) {
-	row := q.db.QueryRow(ctx, countAllVessels)
-	var count int32
-	err := row.Scan(&count)
-	return count, err
-}
-
-const listVesselsPaged = `-- name: ListVesselsPaged :many
-SELECT id, imo, name, flag, year_built, vessel_type, length_m, beam_m, risk_level, last_inspection_date, created_at, updated_at, last_inspection_deficiencies, afretado, acompanhado, last_ciala_checked_at FROM vessels WHERE acompanhado = TRUE ORDER BY name LIMIT 50 OFFSET $1
-`
-
-func (q *Queries) ListVesselsPaged(ctx context.Context, offset int32) ([]Vessel, error) {
-	rows, err := q.db.Query(ctx, listVesselsPaged, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Vessel{}
-	for rows.Next() {
-		var i Vessel
-		if err := rows.Scan(
-			&i.ID, &i.Imo, &i.Name, &i.Flag, &i.YearBuilt, &i.VesselType,
-			&i.LengthM, &i.BeamM, &i.RiskLevel, &i.LastInspectionDate,
-			&i.CreatedAt, &i.UpdatedAt, &i.LastInspectionDeficiencies,
-			&i.Afretado, &i.Acompanhado, &i.LastCialaCheckedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
-}
-
-const searchVessels = `-- name: SearchVessels :many
-SELECT id, imo, name, flag, year_built, vessel_type, length_m, beam_m, risk_level, last_inspection_date, created_at, updated_at, last_inspection_deficiencies, afretado, acompanhado, last_ciala_checked_at FROM vessels
-WHERE acompanhado = TRUE
-  AND (name ILIKE $1 OR imo = $2)
-ORDER BY name
-LIMIT 20
-`
-
-type SearchVesselsParams struct {
-	NamePattern string  `json:"name_pattern"`
-	Imo         *string `json:"imo"`
-}
-
-func (q *Queries) SearchVessels(ctx context.Context, arg SearchVesselsParams) ([]Vessel, error) {
-	rows, err := q.db.Query(ctx, searchVessels, arg.NamePattern, arg.Imo)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Vessel{}
-	for rows.Next() {
-		var i Vessel
-		if err := rows.Scan(
-			&i.ID, &i.Imo, &i.Name, &i.Flag, &i.YearBuilt, &i.VesselType,
-			&i.LengthM, &i.BeamM, &i.RiskLevel, &i.LastInspectionDate,
-			&i.CreatedAt, &i.UpdatedAt, &i.LastInspectionDeficiencies,
-			&i.Afretado, &i.Acompanhado, &i.LastCialaCheckedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
 }

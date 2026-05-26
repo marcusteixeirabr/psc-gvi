@@ -162,11 +162,11 @@ func (h *EscalaHandler) List(c *gin.Context) {
 	pg := pagination.FromQuery(c, int(total), pagination.DefaultPageSize)
 
 	rows, err := h.q.ListEscalasPaged(c.Request.Context(), sqlc.ListEscalasPagedParams{
-		Status:   statusFilter,
-		VesselID: vesselID,
-		Year:     int32(year),
-		Month:    int32(month),
-		Offset:   int32(pg.Offset),
+		Status:     statusFilter,
+		VesselID:   vesselID,
+		Year:       int32(year),
+		Month:      int32(month),
+		PageOffset: int32(pg.Offset),
 	})
 	if err != nil {
 		c.HTML(http.StatusInternalServerError, "escalas.html", gin.H{"Error": err.Error()})
@@ -175,7 +175,7 @@ func (h *EscalaHandler) List(c *gin.Context) {
 
 	entries := make([]EscalaView, 0, len(rows))
 	for _, r := range rows {
-		entries = append(entries, toEscalaView(r))
+		entries = append(entries, toEscalaView(sqlc.ListEscalasRow(r)))
 	}
 
 	months := buildMonthOptions(now)

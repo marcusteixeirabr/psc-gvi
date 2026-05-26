@@ -39,16 +39,6 @@ type PortCall struct {
 	LastZp21SeenAt    pgtype.Timestamptz `json:"last_zp21_seen_at"`
 }
 
-type User struct {
-	ID           int64              `json:"id"`
-	Username     string             `json:"username"`
-	DisplayName  string             `json:"display_name"`
-	PasswordHash string             `json:"password_hash"`
-	Role         string             `json:"role"`
-	Active       bool               `json:"active"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-}
-
 type ScraperRun struct {
 	ID             int64              `json:"id"`
 	Scraper        string             `json:"scraper"`
@@ -60,6 +50,16 @@ type ScraperRun struct {
 	ItemsProcessed int32              `json:"items_processed"`
 	ItemsFailed    int32              `json:"items_failed"`
 	ErrorMessage   *string            `json:"error_message"`
+}
+
+type User struct {
+	ID           int64              `json:"id"`
+	Username     string             `json:"username"`
+	DisplayName  string             `json:"display_name"`
+	PasswordHash string             `json:"password_hash"`
+	Role         string             `json:"role"`
+	Active       bool               `json:"active"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type Vessel struct {

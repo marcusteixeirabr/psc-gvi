@@ -11,6 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const abortStaleZP21PortCalls = `-- name: AbortStaleZP21PortCalls :exec
+UPDATE port_calls
+SET port_call_status = 'aborted', updated_at = NOW()
+WHERE zp21_sourced = TRUE
+  AND port_call_status = 'planned'
+  AND (last_zp21_seen_at IS NULL OR last_zp21_seen_at < $1)
+`
+
+// Cancela escalas ZP-21 planejadas que não apareceram na última consulta.
+// Executado ao final de cada ciclo: port calls com last_zp21_seen_at anterior ao
+// ciclo atual ainda estão 'planned' → sumiu do ZP-21 → status = 'aborted'.
+func (q *Queries) AbortStaleZP21PortCalls(ctx context.Context, lastZp21SeenAt pgtype.Timestamptz) error {
+	_, err := q.db.Exec(ctx, abortStaleZP21PortCalls, lastZp21SeenAt)
+	return err
+}
+
 const cancelBerthing = `-- name: CancelBerthing :exec
 UPDATE port_calls
 SET actual_arrival      = NULL,
@@ -46,13 +62,106 @@ func (q *Queries) CancelSuspension(ctx context.Context, id int64) error {
 	return err
 }
 
+const countEscalas = `-- name: CountEscalas :one
+SELECT COUNT(*)::int
+FROM port_calls pc
+JOIN vessels v ON v.id = pc.vessel_id
+WHERE ($1::text = '' OR pc.port_call_status = $1::text)
+  AND ($2::bigint = 0 OR pc.vessel_id = $2::bigint)
+  AND ($3::int = 0
+       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $3::int)
+  AND ($4::int = 0
+       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $4::int)
+`
+
+type CountEscalasParams struct {
+	Status   string `json:"status"`
+	VesselID int64  `json:"vessel_id"`
+	Year     int32  `json:"year"`
+	Month    int32  `json:"month"`
+}
+
+// Conta escalas com os mesmos filtros de ListEscalas — usado para paginação.
+func (q *Queries) CountEscalas(ctx context.Context, arg CountEscalasParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countEscalas,
+		arg.Status,
+		arg.VesselID,
+		arg.Year,
+		arg.Month,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countReportKPI = `-- name: CountReportKPI :one
+WITH last_per_vessel AS (
+    SELECT DISTINCT ON (pc.vessel_id)
+        pc.id, pc.vessel_id, pc.priority_snapshot,
+        v.afretado AS vessel_afretado, v.flag AS vessel_flag
+    FROM port_calls pc
+    JOIN vessels v ON v.id = pc.vessel_id
+    WHERE v.acompanhado = TRUE
+      AND pc.actual_arrival IS NOT NULL
+      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
+      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
+    ORDER BY pc.vessel_id, pc.actual_arrival DESC
+)
+SELECT
+    COUNT(*) AS total_porto,
+    COUNT(*) FILTER (
+        WHERE lpv.vessel_afretado = FALSE
+          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
+    ) AS estrangeiros,
+    COUNT(*) FILTER (
+        WHERE lpv.vessel_afretado = FALSE
+          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
+          AND (lpv.priority_snapshot IN ('P1','P2') OR ins.id IS NOT NULL)
+    ) AS sujeitos,
+    COUNT(ins.id) FILTER (
+        WHERE lpv.vessel_afretado = FALSE
+          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
+    ) AS inspected
+FROM last_per_vessel lpv
+LEFT JOIN inspections ins ON ins.port_call_id = lpv.id
+`
+
+type CountReportKPIParams struct {
+	Year  int32 `json:"year"`
+	Month int32 `json:"month"`
+}
+
+type CountReportKPIRow struct {
+	TotalPorto   int64 `json:"total_porto"`
+	Estrangeiros int64 `json:"estrangeiros"`
+	Sujeitos     int64 `json:"sujeitos"`
+	Inspected    int64 `json:"inspected"`
+}
+
+// KPI do mês: cada navio conta uma única vez (última escala com atracação no período).
+// total_porto   = navios únicos com atracação no mês
+// estrangeiros  = estrangeiros não-afretados (únicos)
+// sujeitos      = estrangeiros com P1/P2 no snapshot OU já inspecionados
+// inspected     = estrangeiros com inspeção registrada
+func (q *Queries) CountReportKPI(ctx context.Context, arg CountReportKPIParams) (CountReportKPIRow, error) {
+	row := q.db.QueryRow(ctx, countReportKPI, arg.Year, arg.Month)
+	var i CountReportKPIRow
+	err := row.Scan(
+		&i.TotalPorto,
+		&i.Estrangeiros,
+		&i.Sujeitos,
+		&i.Inspected,
+	)
+	return i, err
+}
+
 const createPortCall = `-- name: CreatePortCall :one
 INSERT INTO port_calls (
     vessel_id, terminal, vessel_status, port_call_status,
     eta_date, eta_time, etd_date, etd_time, zp21_sourced
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9
-) RETURNING id, vessel_id, berth, vessel_status, port_call_status, eta_date, eta_time, etd_date, etd_time, actual_arrival, actual_departure, risk_level_snapshot, priority_snapshot, zp21_sourced, created_at, updated_at, terminal
+) RETURNING id, vessel_id, berth, vessel_status, port_call_status, eta_date, eta_time, etd_date, etd_time, actual_arrival, actual_departure, risk_level_snapshot, priority_snapshot, zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at
 `
 
 type CreatePortCallParams struct {
@@ -100,6 +209,7 @@ func (q *Queries) CreatePortCall(ctx context.Context, arg CreatePortCallParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Terminal,
+		&i.LastZp21SeenAt,
 	)
 	return i, err
 }
@@ -115,7 +225,12 @@ func (q *Queries) DeletePortCall(ctx context.Context, id int64) error {
 }
 
 const getActivePortCallByVessel = `-- name: GetActivePortCallByVessel :one
-SELECT id, vessel_id, berth, vessel_status, port_call_status, eta_date, eta_time, etd_date, etd_time, actual_arrival, actual_departure, risk_level_snapshot, priority_snapshot, zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at FROM port_calls
+SELECT id, vessel_id, berth, vessel_status, port_call_status,
+       eta_date, eta_time, etd_date, etd_time,
+       actual_arrival, actual_departure,
+       risk_level_snapshot, priority_snapshot,
+       zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at
+FROM port_calls
 WHERE vessel_id = $1
   AND (port_call_status = 'planned' OR port_call_status = 'active')
 ORDER BY created_at DESC
@@ -214,8 +329,31 @@ func (q *Queries) GetEscala(ctx context.Context, id int64) (GetEscalaRow, error)
 	return i, err
 }
 
+const getLastZP21ScrapeTime = `-- name: GetLastZP21ScrapeTime :one
+SELECT last_zp21_seen_at
+FROM port_calls
+WHERE zp21_sourced = TRUE
+  AND last_zp21_seen_at IS NOT NULL
+ORDER BY last_zp21_seen_at DESC
+LIMIT 1
+`
+
+// Retorna o timestamp do ciclo de scraping ZP-21 mais recente.
+// Usado pelo dashboard para filtrar navios da última consulta.
+func (q *Queries) GetLastZP21ScrapeTime(ctx context.Context) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getLastZP21ScrapeTime)
+	var last_zp21_seen_at pgtype.Timestamptz
+	err := row.Scan(&last_zp21_seen_at)
+	return last_zp21_seen_at, err
+}
+
 const getPortCallByID = `-- name: GetPortCallByID :one
-SELECT id, vessel_id, berth, vessel_status, port_call_status, eta_date, eta_time, etd_date, etd_time, actual_arrival, actual_departure, risk_level_snapshot, priority_snapshot, zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at FROM port_calls WHERE id = $1
+SELECT id, vessel_id, berth, vessel_status, port_call_status,
+       eta_date, eta_time, etd_date, etd_time,
+       actual_arrival, actual_departure,
+       risk_level_snapshot, priority_snapshot,
+       zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at
+FROM port_calls WHERE id = $1
 `
 
 func (q *Queries) GetPortCallByID(ctx context.Context, id int64) (PortCall, error) {
@@ -242,20 +380,6 @@ func (q *Queries) GetPortCallByID(ctx context.Context, id int64) (PortCall, erro
 		&i.LastZp21SeenAt,
 	)
 	return i, err
-}
-
-const abortStaleZP21PortCalls = `-- name: AbortStaleZP21PortCalls :exec
-UPDATE port_calls
-SET port_call_status = 'aborted', updated_at = NOW()
-WHERE zp21_sourced = TRUE
-  AND port_call_status = 'planned'
-  AND (last_zp21_seen_at IS NULL OR last_zp21_seen_at < $1)
-`
-
-// Cancela escalas ZP-21 planejadas que não apareceram na última consulta.
-func (q *Queries) AbortStaleZP21PortCalls(ctx context.Context, scrapeTime pgtype.Timestamptz) error {
-	_, err := q.db.Exec(ctx, abortStaleZP21PortCalls, scrapeTime)
-	return err
 }
 
 const getStaleBerthedPortCalls = `-- name: GetStaleBerthedPortCalls :many
@@ -286,9 +410,11 @@ type GetStaleBerthedPortCallsRow struct {
 	LastInspectionDate pgtype.Date `json:"last_inspection_date"`
 }
 
-// Retorna escalas ativas+atracadas que sumiram do ZP-21 e têm outro navio no mesmo terminal (R5).
-func (q *Queries) GetStaleBerthedPortCalls(ctx context.Context, scrapeTime pgtype.Timestamptz) ([]GetStaleBerthedPortCallsRow, error) {
-	rows, err := q.db.Query(ctx, getStaleBerthedPortCalls, scrapeTime)
+// Retorna escalas ativas+atracadas que sumiram do ZP-21 E têm outro navio confirmado
+// no mesmo terminal (R5). Essa combinação prova que o berço foi liberado pelo navio original.
+// Escalas sem terminal ou sem outro navio no mesmo terminal permanecem atracadas (R4).
+func (q *Queries) GetStaleBerthedPortCalls(ctx context.Context, lastZp21SeenAt pgtype.Timestamptz) ([]GetStaleBerthedPortCallsRow, error) {
+	rows, err := q.db.Query(ctx, getStaleBerthedPortCalls, lastZp21SeenAt)
 	if err != nil {
 		return nil, err
 	}
@@ -313,40 +439,17 @@ func (q *Queries) GetStaleBerthedPortCalls(ctx context.Context, scrapeTime pgtyp
 	return items, nil
 }
 
-const updatePortCallZP21Seen = `-- name: UpdatePortCallZP21Seen :exec
-UPDATE port_calls SET last_zp21_seen_at = $2 WHERE id = $1
-`
-
-type UpdatePortCallZP21SeenParams struct {
-	ID             int64              `json:"id"`
-	LastZp21SeenAt pgtype.Timestamptz `json:"last_zp21_seen_at"`
-}
-
-// Registra o timestamp do ciclo de scraping em que o port call foi visto.
-func (q *Queries) UpdatePortCallZP21Seen(ctx context.Context, arg UpdatePortCallZP21SeenParams) error {
-	_, err := q.db.Exec(ctx, updatePortCallZP21Seen, arg.ID, arg.LastZp21SeenAt)
-	return err
-}
-
-const getLastZP21ScrapeTime = `-- name: GetLastZP21ScrapeTime :one
-SELECT MAX(last_zp21_seen_at) FROM port_calls WHERE zp21_sourced = TRUE
-`
-
-// Retorna o timestamp do ciclo de scraping mais recente para filtro do dashboard.
-func (q *Queries) GetLastZP21ScrapeTime(ctx context.Context) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, getLastZP21ScrapeTime)
-	var max pgtype.Timestamptz
-	err := row.Scan(&max)
-	return max, err
-}
-
 const getVesselsByName = `-- name: GetVesselsByName :many
-SELECT id, imo, name, flag, year_built, vessel_type, length_m, beam_m, risk_level, last_inspection_date, created_at, updated_at, last_inspection_deficiencies, afretado, acompanhado FROM vessels WHERE name ILIKE $1 ORDER BY id
+
+SELECT id, imo, name, flag, year_built, vessel_type, length_m, beam_m, risk_level, last_inspection_date, created_at, updated_at, last_inspection_deficiencies, afretado, acompanhado, last_ciala_checked_at FROM vessels WHERE name ILIKE $1 ORDER BY id
 `
 
+// Queries de PortCall para o sqlc.
 // Retorna todos os vessels com o nome dado (case-insensitive), incluindo não-acompanhados.
-// Navios de estado (Marinha, etc.) ficam acompanhado=FALSE mas devem ser reconhecidos
-// para evitar duplicatas. ORDER BY id prefere o registro mais antigo (manual).
+// O critério de identidade do scraper é nome + dimensões — não o status acompanhado.
+// Navios de estado (Marinha, etc.) não têm IMO e ficam com acompanhado=FALSE, mas devem
+// ser reconhecidos para evitar duplicatas. ORDER BY id garante preferência pelo registro
+// mais antigo (manual) quando há múltiplos candidatos com o mesmo nome.
 func (q *Queries) GetVesselsByName(ctx context.Context, name string) ([]Vessel, error) {
 	rows, err := q.db.Query(ctx, getVesselsByName, name)
 	if err != nil {
@@ -372,6 +475,7 @@ func (q *Queries) GetVesselsByName(ctx context.Context, name string) ([]Vessel, 
 			&i.LastInspectionDeficiencies,
 			&i.Afretado,
 			&i.Acompanhado,
+			&i.LastCialaCheckedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -406,8 +510,10 @@ LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 WHERE v.acompanhado = TRUE
   AND (pc.port_call_status = 'planned' OR pc.port_call_status = 'active')
   AND (
+    -- Estrangeiros não afretados: sempre candidatos ao dashboard
     (v.afretado = FALSE AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil', 'brasil')))
     OR
+    -- Nacionais e afretados: apenas se tiverem deficiências CIALA (filtro fino no handler)
     (v.last_inspection_deficiencies IS NOT NULL AND v.last_inspection_deficiencies != '')
   )
 ORDER BY COALESCE(pc.eta_date, pc.etd_date) ASC NULLS LAST, v.name ASC
@@ -440,8 +546,13 @@ type ListDashboardEntriesRow struct {
 	InspectionResult           *string            `json:"inspection_result"`
 }
 
-// Retorna navios mercantes (ou sem categoria) com port calls ativos.
-// NULL category aparece para alertar que o cadastro precisa ser completado.
+// Retorna navios acompanhados com port calls ativos para avaliação no dashboard.
+// Regra de exibição (aplicada no handler Go):
+//   - Estrangeiros não afretados: sempre incluídos (filtro de prioridade no handler).
+//   - Nacionais (brasil/brazil) e afretados: incluídos apenas se tiverem
+//     deficiências CIALA registradas — sem inspeção na escala atual.
+//
+// O filtro SQL inclui a segunda categoria para que o handler possa avaliá-la.
 // Ordenado por data (ETA ou ETD) — inspetores decidem com base no horário disponível.
 func (q *Queries) ListDashboardEntries(ctx context.Context) ([]ListDashboardEntriesRow, error) {
 	rows, err := q.db.Query(ctx, listDashboardEntries)
@@ -678,6 +789,237 @@ func (q *Queries) ListEscalasByVessel(ctx context.Context, vesselID int64) ([]Li
 	return items, nil
 }
 
+const listEscalasPaged = `-- name: ListEscalasPaged :many
+SELECT
+    pc.id, pc.vessel_id, pc.terminal,
+    pc.eta_date, pc.etd_date,
+    pc.actual_arrival, pc.actual_departure,
+    pc.vessel_status, pc.port_call_status,
+    pc.risk_level_snapshot, pc.priority_snapshot,
+    v.name AS vessel_name, v.imo AS vessel_imo,
+    v.flag AS vessel_flag, v.afretado AS vessel_afretado, v.acompanhado AS vessel_acompanhado,
+    v.risk_level AS vessel_risk_level,
+    v.last_inspection_date AS vessel_last_inspection_date,
+    ins.id     AS inspection_id,
+    ins.result AS inspection_result
+FROM port_calls pc
+JOIN vessels v ON v.id = pc.vessel_id
+LEFT JOIN inspections ins ON ins.port_call_id = pc.id
+WHERE ($1::text = '' OR pc.port_call_status = $1::text)
+  AND ($2::bigint = 0 OR pc.vessel_id = $2::bigint)
+  AND ($3::int = 0
+       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $3::int)
+  AND ($4::int = 0
+       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $4::int)
+ORDER BY COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date) ASC NULLS LAST,
+         pc.created_at ASC
+LIMIT 50 OFFSET $5::int
+`
+
+type ListEscalasPagedParams struct {
+	Status     string `json:"status"`
+	VesselID   int64  `json:"vessel_id"`
+	Year       int32  `json:"year"`
+	Month      int32  `json:"month"`
+	PageOffset int32  `json:"page_offset"`
+}
+
+type ListEscalasPagedRow struct {
+	ID                       int64              `json:"id"`
+	VesselID                 int64              `json:"vessel_id"`
+	Terminal                 *string            `json:"terminal"`
+	EtaDate                  pgtype.Date        `json:"eta_date"`
+	EtdDate                  pgtype.Date        `json:"etd_date"`
+	ActualArrival            pgtype.Timestamptz `json:"actual_arrival"`
+	ActualDeparture          pgtype.Timestamptz `json:"actual_departure"`
+	VesselStatus             string             `json:"vessel_status"`
+	PortCallStatus           string             `json:"port_call_status"`
+	RiskLevelSnapshot        *string            `json:"risk_level_snapshot"`
+	PrioritySnapshot         *string            `json:"priority_snapshot"`
+	VesselName               string             `json:"vessel_name"`
+	VesselImo                *string            `json:"vessel_imo"`
+	VesselFlag               *string            `json:"vessel_flag"`
+	VesselAfretado           bool               `json:"vessel_afretado"`
+	VesselAcompanhado        bool               `json:"vessel_acompanhado"`
+	VesselRiskLevel          *string            `json:"vessel_risk_level"`
+	VesselLastInspectionDate pgtype.Date        `json:"vessel_last_inspection_date"`
+	InspectionID             *int64             `json:"inspection_id"`
+	InspectionResult         *string            `json:"inspection_result"`
+}
+
+// Lista escalas com paginação (LIMIT 50 OFFSET). NÃO modifica ListEscalas.
+func (q *Queries) ListEscalasPaged(ctx context.Context, arg ListEscalasPagedParams) ([]ListEscalasPagedRow, error) {
+	rows, err := q.db.Query(ctx, listEscalasPaged,
+		arg.Status,
+		arg.VesselID,
+		arg.Year,
+		arg.Month,
+		arg.PageOffset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEscalasPagedRow{}
+	for rows.Next() {
+		var i ListEscalasPagedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.VesselID,
+			&i.Terminal,
+			&i.EtaDate,
+			&i.EtdDate,
+			&i.ActualArrival,
+			&i.ActualDeparture,
+			&i.VesselStatus,
+			&i.PortCallStatus,
+			&i.RiskLevelSnapshot,
+			&i.PrioritySnapshot,
+			&i.VesselName,
+			&i.VesselImo,
+			&i.VesselFlag,
+			&i.VesselAfretado,
+			&i.VesselAcompanhado,
+			&i.VesselRiskLevel,
+			&i.VesselLastInspectionDate,
+			&i.InspectionID,
+			&i.InspectionResult,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listReportEntries = `-- name: ListReportEntries :many
+WITH period_vessels AS (
+    -- Apenas escalas com atracação registrada — planejadas ficam de fora.
+    SELECT pc.id, pc.vessel_id,
+           pc.actual_arrival::date AS arrival_date
+    FROM port_calls pc
+    JOIN vessels v ON v.id = pc.vessel_id
+    WHERE v.acompanhado = TRUE
+      AND pc.actual_arrival IS NOT NULL
+      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
+      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
+),
+vessel_first_arrival AS (
+    SELECT vessel_id, MIN(arrival_date) AS first_arrival
+    FROM period_vessels GROUP BY vessel_id
+),
+ranked AS (
+    SELECT
+        pc.id, pc.vessel_id, pc.terminal,
+        pc.eta_date, pc.etd_date,
+        pc.actual_arrival, pc.actual_departure,
+        pc.port_call_status, pc.risk_level_snapshot, pc.priority_snapshot,
+        v.name AS vessel_name, v.imo AS vessel_imo, v.flag AS vessel_flag,
+        v.afretado AS vessel_afretado, v.year_built AS vessel_year_built,
+        v.vessel_type AS vessel_type,
+        ins.id AS inspection_id, ins.result AS inspection_result, ins.inspection_date,
+        vfa.first_arrival,
+        ROW_NUMBER() OVER (
+            -- Última atracação real do navio no período (sem fallback para planejadas).
+            PARTITION BY pc.vessel_id
+            ORDER BY pc.actual_arrival DESC NULLS LAST
+        ) AS rn
+    FROM period_vessels pv
+    JOIN port_calls pc ON pc.id = pv.id
+    JOIN vessels v ON v.id = pc.vessel_id
+    JOIN vessel_first_arrival vfa ON vfa.vessel_id = pc.vessel_id
+    LEFT JOIN inspections ins ON ins.port_call_id = pc.id
+)
+SELECT id, vessel_id, terminal, eta_date, etd_date,
+       actual_arrival, actual_departure, port_call_status,
+       risk_level_snapshot, priority_snapshot,
+       vessel_name, vessel_imo, vessel_flag, vessel_afretado,
+       vessel_year_built, vessel_type,
+       inspection_id, inspection_result, inspection_date
+FROM ranked
+WHERE rn = 1
+ORDER BY
+    -- Estrangeiros não afretados primeiro; brasileiros e afretados no final.
+    CASE WHEN vessel_afretado = FALSE
+              AND (vessel_flag IS NULL OR LOWER(TRIM(vessel_flag)) NOT IN ('brazil','brasil'))
+         THEN 0 ELSE 1 END ASC,
+    actual_arrival ASC NULLS LAST,
+    vessel_name ASC
+`
+
+type ListReportEntriesParams struct {
+	Year  int32 `json:"year"`
+	Month int32 `json:"month"`
+}
+
+type ListReportEntriesRow struct {
+	ID                int64              `json:"id"`
+	VesselID          int64              `json:"vessel_id"`
+	Terminal          *string            `json:"terminal"`
+	EtaDate           pgtype.Date        `json:"eta_date"`
+	EtdDate           pgtype.Date        `json:"etd_date"`
+	ActualArrival     pgtype.Timestamptz `json:"actual_arrival"`
+	ActualDeparture   pgtype.Timestamptz `json:"actual_departure"`
+	PortCallStatus    string             `json:"port_call_status"`
+	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
+	PrioritySnapshot  *string            `json:"priority_snapshot"`
+	VesselName        string             `json:"vessel_name"`
+	VesselImo         *string            `json:"vessel_imo"`
+	VesselFlag        *string            `json:"vessel_flag"`
+	VesselAfretado    bool               `json:"vessel_afretado"`
+	VesselYearBuilt   *int32             `json:"vessel_year_built"`
+	VesselType        *string            `json:"vessel_type"`
+	InspectionID      *int64             `json:"inspection_id"`
+	InspectionResult  *string            `json:"inspection_result"`
+	InspectionDate    pgtype.Date        `json:"inspection_date"`
+}
+
+// Uma linha por navio (última escala do período).
+// Estrangeiros não-afretados primeiro, ordenados pela primeira atracação do navio no período.
+// Afretados e nacionais sempre por último.
+func (q *Queries) ListReportEntries(ctx context.Context, arg ListReportEntriesParams) ([]ListReportEntriesRow, error) {
+	rows, err := q.db.Query(ctx, listReportEntries, arg.Year, arg.Month)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReportEntriesRow{}
+	for rows.Next() {
+		var i ListReportEntriesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.VesselID,
+			&i.Terminal,
+			&i.EtaDate,
+			&i.EtdDate,
+			&i.ActualArrival,
+			&i.ActualDeparture,
+			&i.PortCallStatus,
+			&i.RiskLevelSnapshot,
+			&i.PrioritySnapshot,
+			&i.VesselName,
+			&i.VesselImo,
+			&i.VesselFlag,
+			&i.VesselAfretado,
+			&i.VesselYearBuilt,
+			&i.VesselType,
+			&i.InspectionID,
+			&i.InspectionResult,
+			&i.InspectionDate,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reassignPortCalls = `-- name: ReassignPortCalls :exec
 UPDATE port_calls
 SET vessel_id = $1
@@ -741,25 +1083,6 @@ func (q *Queries) RegisterDeparture(ctx context.Context, arg RegisterDeparturePa
 		arg.RiskLevelSnapshot,
 		arg.PrioritySnapshot,
 	)
-	return err
-}
-
-const updatePortCallSnapshot = `-- name: UpdatePortCallSnapshot :exec
-UPDATE port_calls
-SET risk_level_snapshot = $2,
-    priority_snapshot   = $3,
-    updated_at          = NOW()
-WHERE id = $1
-`
-
-type UpdatePortCallSnapshotParams struct {
-	ID                int64   `json:"id"`
-	RiskLevelSnapshot *string `json:"risk_level_snapshot"`
-	PrioritySnapshot  *string `json:"priority_snapshot"`
-}
-
-func (q *Queries) UpdatePortCallSnapshot(ctx context.Context, arg UpdatePortCallSnapshotParams) error {
-	_, err := q.db.Exec(ctx, updatePortCallSnapshot, arg.ID, arg.RiskLevelSnapshot, arg.PrioritySnapshot)
 	return err
 }
 
@@ -889,6 +1212,7 @@ type UpdatePortCallFullParams struct {
 }
 
 // Edição completa de uma escala pelo usuário.
+// vessel_status é derivado automaticamente: actual_arrival preenchido → berthed, senão navigating.
 func (q *Queries) UpdatePortCallFull(ctx context.Context, arg UpdatePortCallFullParams) error {
 	_, err := q.db.Exec(ctx, updatePortCallFull,
 		arg.ID,
@@ -906,257 +1230,38 @@ func (q *Queries) UpdatePortCallFull(ctx context.Context, arg UpdatePortCallFull
 	return err
 }
 
-const listReportEntries = `-- name: ListReportEntries :many
-WITH period_vessels AS (
-    SELECT pc.id, pc.vessel_id,
-           pc.actual_arrival::date AS arrival_date
-    FROM port_calls pc
-    JOIN vessels v ON v.id = pc.vessel_id
-    WHERE v.acompanhado = TRUE
-      AND pc.actual_arrival IS NOT NULL
-      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
-      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
-),
-vessel_first_arrival AS (
-    SELECT vessel_id, MIN(arrival_date) AS first_arrival
-    FROM period_vessels
-    GROUP BY vessel_id
-),
-ranked AS (
-    SELECT
-        pc.id, pc.vessel_id, pc.terminal,
-        pc.eta_date, pc.etd_date,
-        pc.actual_arrival, pc.actual_departure,
-        pc.port_call_status, pc.risk_level_snapshot, pc.priority_snapshot,
-        v.name AS vessel_name, v.imo AS vessel_imo, v.flag AS vessel_flag,
-        v.afretado AS vessel_afretado, v.year_built AS vessel_year_built,
-        v.vessel_type AS vessel_type,
-        ins.id AS inspection_id, ins.result AS inspection_result, ins.inspection_date,
-        vfa.first_arrival,
-        ROW_NUMBER() OVER (
-            PARTITION BY pc.vessel_id
-            ORDER BY pc.actual_arrival DESC NULLS LAST
-        ) AS rn
-    FROM period_vessels pv
-    JOIN port_calls pc ON pc.id = pv.id
-    JOIN vessels v ON v.id = pc.vessel_id
-    JOIN vessel_first_arrival vfa ON vfa.vessel_id = pc.vessel_id
-    LEFT JOIN inspections ins ON ins.port_call_id = pc.id
-)
-SELECT id, vessel_id, terminal, eta_date, etd_date,
-       actual_arrival, actual_departure, port_call_status,
-       risk_level_snapshot, priority_snapshot,
-       vessel_name, vessel_imo, vessel_flag, vessel_afretado,
-       vessel_year_built, vessel_type,
-       inspection_id, inspection_result, inspection_date
-FROM ranked
-WHERE rn = 1
-ORDER BY
-    CASE WHEN vessel_afretado = FALSE
-              AND (vessel_flag IS NULL OR LOWER(TRIM(vessel_flag)) NOT IN ('brazil','brasil'))
-         THEN 0 ELSE 1 END ASC,
-    actual_arrival ASC NULLS LAST,
-    vessel_name ASC
+const updatePortCallSnapshot = `-- name: UpdatePortCallSnapshot :exec
+UPDATE port_calls
+SET risk_level_snapshot = $2,
+    priority_snapshot   = $3,
+    updated_at          = NOW()
+WHERE id = $1
 `
 
-type ListReportEntriesParams struct {
-	Year  int32 `json:"year"`
-	Month int32 `json:"month"`
+type UpdatePortCallSnapshotParams struct {
+	ID                int64   `json:"id"`
+	RiskLevelSnapshot *string `json:"risk_level_snapshot"`
+	PrioritySnapshot  *string `json:"priority_snapshot"`
 }
 
-type ListReportEntriesRow struct {
-	ID                int64              `json:"id"`
-	VesselID          int64              `json:"vessel_id"`
-	Terminal          *string            `json:"terminal"`
-	EtaDate           pgtype.Date        `json:"eta_date"`
-	EtdDate           pgtype.Date        `json:"etd_date"`
-	ActualArrival     pgtype.Timestamptz `json:"actual_arrival"`
-	ActualDeparture   pgtype.Timestamptz `json:"actual_departure"`
-	PortCallStatus    string             `json:"port_call_status"`
-	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
-	PrioritySnapshot  *string            `json:"priority_snapshot"`
-	VesselName        string             `json:"vessel_name"`
-	VesselImo         *string            `json:"vessel_imo"`
-	VesselFlag        *string            `json:"vessel_flag"`
-	VesselAfretado    bool               `json:"vessel_afretado"`
-	VesselYearBuilt   *int32             `json:"vessel_year_built"`
-	VesselType        *string            `json:"vessel_type"`
-	InspectionID     *int64      `json:"inspection_id"`
-	InspectionResult *string    `json:"inspection_result"`
-	InspectionDate   pgtype.Date `json:"inspection_date"`
+// Salva o snapshot de risco/prioridade no momento da inspeção (estado pré-inspeção).
+func (q *Queries) UpdatePortCallSnapshot(ctx context.Context, arg UpdatePortCallSnapshotParams) error {
+	_, err := q.db.Exec(ctx, updatePortCallSnapshot, arg.ID, arg.RiskLevelSnapshot, arg.PrioritySnapshot)
+	return err
 }
 
-// Retorna escalas que tocaram o porto no mês selecionado, para o relatório mensal.
-func (q *Queries) ListReportEntries(ctx context.Context, arg ListReportEntriesParams) ([]ListReportEntriesRow, error) {
-	rows, err := q.db.Query(ctx, listReportEntries, arg.Year, arg.Month)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListReportEntriesRow{}
-	for rows.Next() {
-		var i ListReportEntriesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.VesselID,
-			&i.Terminal,
-			&i.EtaDate,
-			&i.EtdDate,
-			&i.ActualArrival,
-			&i.ActualDeparture,
-			&i.PortCallStatus,
-			&i.RiskLevelSnapshot,
-			&i.PrioritySnapshot,
-			&i.VesselName,
-			&i.VesselImo,
-			&i.VesselFlag,
-			&i.VesselAfretado,
-			&i.VesselYearBuilt,
-			&i.VesselType,
-			&i.InspectionID,
-			&i.InspectionResult,
-			&i.InspectionDate,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const countReportKPI = `-- name: CountReportKPI :one
-SELECT
-    COUNT(pc.id) AS total_porto,
-    COUNT(pc.id) FILTER (
-        WHERE v.afretado = FALSE
-          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
-    ) AS estrangeiros,
-    COUNT(pc.id) FILTER (
-        WHERE v.afretado = FALSE
-          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
-          AND (pc.priority_snapshot IN ('P1','P2') OR ins.id IS NOT NULL)
-    ) AS sujeitos,
-    COUNT(ins.id) FILTER (
-        WHERE v.afretado = FALSE
-          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
-    ) AS inspected
-FROM port_calls pc
-JOIN vessels v ON v.id = pc.vessel_id
-LEFT JOIN inspections ins ON ins.port_call_id = pc.id
-WHERE v.acompanhado = TRUE
-  AND pc.actual_arrival IS NOT NULL
-  AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
-  AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
+const updatePortCallZP21Seen = `-- name: UpdatePortCallZP21Seen :exec
+UPDATE port_calls SET last_zp21_seen_at = $2 WHERE id = $1
 `
 
-type CountReportKPIParams struct {
-	Year  int32 `json:"year"`
-	Month int32 `json:"month"`
+type UpdatePortCallZP21SeenParams struct {
+	ID             int64              `json:"id"`
+	LastZp21SeenAt pgtype.Timestamptz `json:"last_zp21_seen_at"`
 }
 
-type CountReportKPIRow struct {
-	TotalPorto   int64 `json:"total_porto"`
-	Estrangeiros int64 `json:"estrangeiros"`
-	Sujeitos     int64 `json:"sujeitos"`
-	Inspected    int64 `json:"inspected"`
-}
-
-func (q *Queries) CountReportKPI(ctx context.Context, arg CountReportKPIParams) (CountReportKPIRow, error) {
-	row := q.db.QueryRow(ctx, countReportKPI, arg.Year, arg.Month)
-	var i CountReportKPIRow
-	err := row.Scan(&i.TotalPorto, &i.Estrangeiros, &i.Sujeitos, &i.Inspected)
-	return i, err
-}
-
-const countEscalas = `-- name: CountEscalas :one
-SELECT COUNT(*)::int
-FROM port_calls pc
-JOIN vessels v ON v.id = pc.vessel_id
-WHERE ($1::text = '' OR pc.port_call_status = $1::text)
-  AND ($2::bigint = 0 OR pc.vessel_id = $2::bigint)
-  AND ($3::int = 0
-       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $3::int)
-  AND ($4::int = 0
-       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $4::int)
-`
-
-type CountEscalasParams struct {
-	Status   string `json:"status"`
-	VesselID int64  `json:"vessel_id"`
-	Year     int32  `json:"year"`
-	Month    int32  `json:"month"`
-}
-
-func (q *Queries) CountEscalas(ctx context.Context, arg CountEscalasParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countEscalas, arg.Status, arg.VesselID, arg.Year, arg.Month)
-	var count int32
-	err := row.Scan(&count)
-	return count, err
-}
-
-const listEscalasPaged = `-- name: ListEscalasPaged :many
-SELECT
-    pc.id, pc.vessel_id, pc.terminal,
-    pc.eta_date, pc.etd_date,
-    pc.actual_arrival, pc.actual_departure,
-    pc.vessel_status, pc.port_call_status,
-    pc.risk_level_snapshot, pc.priority_snapshot,
-    v.name AS vessel_name, v.imo AS vessel_imo,
-    v.flag AS vessel_flag, v.afretado AS vessel_afretado, v.acompanhado AS vessel_acompanhado,
-    v.risk_level AS vessel_risk_level,
-    v.last_inspection_date AS vessel_last_inspection_date,
-    ins.id     AS inspection_id,
-    ins.result AS inspection_result
-FROM port_calls pc
-JOIN vessels v ON v.id = pc.vessel_id
-LEFT JOIN inspections ins ON ins.port_call_id = pc.id
-WHERE ($1::text = '' OR pc.port_call_status = $1::text)
-  AND ($2::bigint = 0 OR pc.vessel_id = $2::bigint)
-  AND ($3::int = 0
-       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $3::int)
-  AND ($4::int = 0
-       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = $4::int)
-ORDER BY COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date) ASC NULLS LAST,
-         pc.created_at ASC
-LIMIT 50 OFFSET $5
-`
-
-type ListEscalasPagedParams struct {
-	Status   string `json:"status"`
-	VesselID int64  `json:"vessel_id"`
-	Year     int32  `json:"year"`
-	Month    int32  `json:"month"`
-	Offset   int32  `json:"offset"`
-}
-
-func (q *Queries) ListEscalasPaged(ctx context.Context, arg ListEscalasPagedParams) ([]ListEscalasRow, error) {
-	rows, err := q.db.Query(ctx, listEscalasPaged,
-		arg.Status, arg.VesselID, arg.Year, arg.Month, arg.Offset,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []ListEscalasRow{}
-	for rows.Next() {
-		var i ListEscalasRow
-		if err := rows.Scan(
-			&i.ID, &i.VesselID, &i.Terminal,
-			&i.EtaDate, &i.EtdDate,
-			&i.ActualArrival, &i.ActualDeparture,
-			&i.VesselStatus, &i.PortCallStatus,
-			&i.RiskLevelSnapshot, &i.PrioritySnapshot,
-			&i.VesselName, &i.VesselImo,
-			&i.VesselFlag, &i.VesselAfretado, &i.VesselAcompanhado,
-			&i.VesselRiskLevel, &i.VesselLastInspectionDate,
-			&i.InspectionID, &i.InspectionResult,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	return items, rows.Err()
+// Registra o timestamp do ciclo de scraping em que o port call foi visto.
+// Chamado para todo port call processado pelo scraper ZP-21.
+func (q *Queries) UpdatePortCallZP21Seen(ctx context.Context, arg UpdatePortCallZP21SeenParams) error {
+	_, err := q.db.Exec(ctx, updatePortCallZP21Seen, arg.ID, arg.LastZp21SeenAt)
+	return err
 }

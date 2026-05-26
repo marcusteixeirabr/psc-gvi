@@ -123,11 +123,15 @@ func (h *EscalaHandler) NewSave(c *gin.Context) {
 		return
 	}
 
-	// Se atracação foi informada, registra via UpdateBerthingDate para manter a hierarquia.
+	// Se atracação foi informada, registra já com snapshot de risco/prioridade.
 	if arrivalTS.Valid {
+		v, _ := h.q.GetVessel(c.Request.Context(), vesselID)
+		prio := nullableStr(string(vessel.CalcPriority(v.RiskLevel, v.LastInspectionDate)))
 		_ = h.q.RegisterBerthing(c.Request.Context(), sqlc.RegisterBerthingParams{
-			ID:            pc.ID,
-			ActualArrival: arrivalTS,
+			ID:                pc.ID,
+			ActualArrival:     arrivalTS,
+			RiskLevelSnapshot: v.RiskLevel,
+			PrioritySnapshot:  prio,
 		})
 	}
 
@@ -194,7 +198,7 @@ func (h *EscalaHandler) List(c *gin.Context) {
 }
 
 // RegisterBerthing — POST /escalas/:id/berthing
-// Registra a data de atracação efetiva.
+// Registra a data de atracação efetiva e captura o snapshot de risco/prioridade.
 func (h *EscalaHandler) RegisterBerthing(c *gin.Context) {
 	id := parseID(c)
 	back := referer(c, "/escalas")
@@ -210,19 +214,29 @@ func (h *EscalaHandler) RegisterBerthing(c *gin.Context) {
 		return
 	}
 
+	escala, err := h.q.GetEscala(c.Request.Context(), id)
+	if err != nil {
+		c.Redirect(http.StatusFound, back+"&error="+url.QueryEscape("Escala não encontrada"))
+		return
+	}
+	prio := nullableStr(string(vessel.CalcPriority(escala.VesselRiskLevel, escala.VesselLastInspectionDate)))
+
 	if err := h.q.RegisterBerthing(c.Request.Context(), sqlc.RegisterBerthingParams{
-		ID:            id,
-		ActualArrival: ts,
+		ID:                id,
+		ActualArrival:     ts,
+		RiskLevelSnapshot: escala.VesselRiskLevel,
+		PrioritySnapshot:  prio,
 	}); err != nil {
 		c.Redirect(http.StatusFound, back+"&error="+url.QueryEscape("Erro ao registrar atracação: "+err.Error()))
 		return
 	}
 
-	c.Redirect(http.StatusFound, back+"&flash="+url.QueryEscape("Atracação registrada em "+dateStr))
+	c.Redirect(http.StatusFound, back+"&flash="+url.QueryEscape("Atracação registrada em "+dateStr+" — snapshot salvo"))
 }
 
 // RegisterSuspension — POST /escalas/:id/suspension
-// Registra a suspensão (partida/desamarre) efetiva e tira o snapshot final.
+// Registra a suspensão (partida/desamarre) efetiva e conclui a escala.
+// O snapshot de risco/prioridade foi capturado na atracação e não é alterado aqui.
 func (h *EscalaHandler) RegisterSuspension(c *gin.Context) {
 	id := parseID(c)
 	back := referer(c, "/escalas")
@@ -238,35 +252,15 @@ func (h *EscalaHandler) RegisterSuspension(c *gin.Context) {
 		return
 	}
 
-	// Busca a escala com dados do navio para calcular o snapshot.
-	escala, err := h.q.GetEscala(c.Request.Context(), id)
-	if err != nil {
-		c.Redirect(http.StatusFound, back+"&error="+url.QueryEscape("Escala não encontrada"))
-		return
-	}
-
-	// Snapshot: se a inspeção já o capturou (estado pré-inspeção), preserva.
-	// Caso contrário calcula agora com os dados atuais do vessel.
-	riskSnap := escala.RiskLevelSnapshot
-	var prioritySnap string
-	if escala.PrioritySnapshot != nil {
-		prioritySnap = *escala.PrioritySnapshot
-	} else {
-		riskSnap = escala.VesselRiskLevel
-		prioritySnap = string(vessel.CalcPriority(riskSnap, escala.VesselLastInspectionDate))
-	}
-
 	if err := h.q.RegisterDeparture(c.Request.Context(), sqlc.RegisterDepartureParams{
-		ID:                  id,
-		ActualDeparture:     ts,
-		RiskLevelSnapshot:   riskSnap,
-		PrioritySnapshot:    &prioritySnap,
+		ID:              id,
+		ActualDeparture: ts,
 	}); err != nil {
 		c.Redirect(http.StatusFound, back+"&error="+url.QueryEscape("Erro ao registrar partida: "+err.Error()))
 		return
 	}
 
-	c.Redirect(http.StatusFound, back+"&flash="+url.QueryEscape("Suspensão registrada em "+dateStr+" — snapshot salvo"))
+	c.Redirect(http.StatusFound, back+"&flash="+url.QueryEscape("Suspensão registrada em "+dateStr))
 }
 
 // EditForm — GET /escalas/:id/edit

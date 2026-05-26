@@ -188,12 +188,15 @@ JOIN vessels v ON v.id = pc.vessel_id
 WHERE pc.id = $1;
 
 -- name: RegisterBerthing :exec
--- Registra a atracação efetiva: data real de chegada + muda status para ativo.
+-- Registra a atracação efetiva: data real de chegada + snapshot de risco/prioridade + muda status para ativo.
+-- O snapshot é capturado aqui (estado do navio na chegada) e só pode ser alterado por uma inspeção.
 UPDATE port_calls
-SET actual_arrival   = $2,
-    vessel_status    = 'berthed',
-    port_call_status = 'active',
-    updated_at       = NOW()
+SET actual_arrival      = $2,
+    vessel_status       = 'berthed',
+    port_call_status    = 'active',
+    risk_level_snapshot = $3,
+    priority_snapshot   = $4,
+    updated_at          = NOW()
 WHERE id = $1;
 
 -- name: UpdatePortCallSnapshot :exec
@@ -205,13 +208,12 @@ SET risk_level_snapshot = $2,
 WHERE id = $1;
 
 -- name: RegisterDeparture :exec
--- Registra a partida efetiva: data real de saída + snapshot + conclui a escala.
+-- Registra a partida efetiva: data real de saída + conclui a escala.
+-- O snapshot (risco/prioridade) já foi capturado na atracação — não é alterado aqui.
 UPDATE port_calls
-SET actual_departure      = $2,
-    port_call_status      = 'completed',
-    risk_level_snapshot   = $3,
-    priority_snapshot     = $4,
-    updated_at            = NOW()
+SET actual_departure  = $2,
+    port_call_status  = 'completed',
+    updated_at        = NOW()
 WHERE id = $1;
 
 -- name: GetPortCallByID :one

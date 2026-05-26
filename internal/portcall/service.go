@@ -68,7 +68,7 @@ func ProcessManobras(ctx context.Context, q *sqlc.Queries, rows []scraper.Manobr
 		slog.Error("GetStaleBerthedPortCalls falhou", "component", "portcall", "error", err)
 	} else {
 		for _, row := range staleBerthed {
-			if err := autoCompleteDeparture(ctx, q, row.ID, row.RiskLevel, row.LastInspectionDate); err != nil {
+			if err := autoCompleteDeparture(ctx, q, row.ID); err != nil {
 				slog.Error("R5: auto-conclusão falhou", "component", "portcall", "vessel", row.VesselName, "error", err)
 			} else {
 				slog.Info("R5: vessel suspendeu (sumiu do ZP-21, terminal ocupado por outro navio)", "component", "portcall", "vessel", row.VesselName)
@@ -155,7 +155,7 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 	if pc.PortCallStatus == "active" && pc.VesselStatus == "berthed" && saida != nil && entrada == nil {
 		if !strings.Contains(saida.Situation, "atrac") {
 			// Situação diferente de "atracado" (ou ausente) → navio está partindo. Conclui.
-			if err := autoCompleteDeparture(ctx, q, pc.ID, v.RiskLevel, v.LastInspectionDate); err != nil {
+			if err := autoCompleteDeparture(ctx, q, pc.ID); err != nil {
 				slog.Error("R7: auto-conclusão falhou", "component", "portcall", "vessel", v.Name, "error", err)
 			} else {
 				slog.Info("R7: vessel suspendeu (só saida)", "component", "portcall", "vessel", v.Name, "situacao", saida.Situation)
@@ -179,7 +179,7 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 			if pc.EtaDate.Valid {
 				berthDate = pc.EtaDate.Time
 			}
-			if err := autoRegisterBerthing(ctx, q, pc.ID, berthDate); err != nil {
+			if err := autoRegisterBerthing(ctx, q, pc.ID, berthDate, v.RiskLevel, v.LastInspectionDate); err != nil {
 				slog.Error("auto-atracação falhou", "component", "portcall", "vessel", v.Name, "error", err)
 			} else {
 				slog.Info("auto-atracação registrada", "component", "portcall", "vessel", v.Name, "data", berthDate.Format("02/01/2006"))
@@ -240,7 +240,7 @@ func createPortCallEntry(ctx context.Context, q *sqlc.Queries, v sqlc.Vessel, en
 	markZP21Seen(ctx, q, newPC.ID, scrapeTime)
 
 	if initialStatus == "berthed" {
-		if err := autoRegisterBerthing(ctx, q, newPC.ID, time.Now()); err != nil {
+		if err := autoRegisterBerthing(ctx, q, newPC.ID, time.Now(), v.RiskLevel, v.LastInspectionDate); err != nil {
 			slog.Error("auto-atracação falhou na criação", "component", "portcall", "vessel", v.Name, "error", err)
 		} else {
 			slog.Info("auto-atracação registrada na criação (data corrente)", "component", "portcall", "vessel", v.Name)
@@ -250,17 +250,13 @@ func createPortCallEntry(ctx context.Context, q *sqlc.Queries, v sqlc.Vessel, en
 }
 
 // autoCompleteDeparture conclui automaticamente uma escala ativa.
-// Usa data corrente como actual_departure e tira snapshot dos dados atuais do navio.
-func autoCompleteDeparture(ctx context.Context, q *sqlc.Queries, portCallID int64, riskLevel *string, lastInspDate pgtype.Date) error {
+// Usa data corrente como actual_departure. O snapshot já foi capturado na atracação.
+func autoCompleteDeparture(ctx context.Context, q *sqlc.Queries, portCallID int64) error {
 	var ts pgtype.Timestamptz
 	_ = ts.Scan(midnightOf(time.Now()))
-	priority := vessel.CalcPriority(riskLevel, lastInspDate)
-	priorityStr := string(priority)
 	return q.RegisterDeparture(ctx, sqlc.RegisterDepartureParams{
-		ID:                portCallID,
-		ActualDeparture:   ts,
-		RiskLevelSnapshot: riskLevel,
-		PrioritySnapshot:  &priorityStr,
+		ID:              portCallID,
+		ActualDeparture: ts,
 	})
 }
 
@@ -277,14 +273,18 @@ func markZP21Seen(ctx context.Context, q *sqlc.Queries, portCallID int64, t time
 	}
 }
 
-// autoRegisterBerthing registra a atracação automática via ZP-21.
+// autoRegisterBerthing registra a atracação automática via ZP-21 com snapshot de risco/prioridade.
 // Só age se actual_arrival ainda estiver vazio (hierarquia: dado consolidado > automático).
-func autoRegisterBerthing(ctx context.Context, q *sqlc.Queries, portCallID int64, date time.Time) error {
+func autoRegisterBerthing(ctx context.Context, q *sqlc.Queries, portCallID int64, date time.Time, riskLevel *string, lastInspDate pgtype.Date) error {
 	var ts pgtype.Timestamptz
 	_ = ts.Scan(midnightOf(date))
+	priority := vessel.CalcPriority(riskLevel, lastInspDate)
+	priorityStr := string(priority)
 	return q.RegisterBerthing(ctx, sqlc.RegisterBerthingParams{
-		ID:            portCallID,
-		ActualArrival: ts,
+		ID:                portCallID,
+		ActualArrival:     ts,
+		RiskLevelSnapshot: riskLevel,
+		PrioritySnapshot:  &priorityStr,
 	})
 }
 

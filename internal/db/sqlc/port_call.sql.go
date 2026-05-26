@@ -1040,49 +1040,51 @@ func (q *Queries) ReassignPortCalls(ctx context.Context, arg ReassignPortCallsPa
 
 const registerBerthing = `-- name: RegisterBerthing :exec
 UPDATE port_calls
-SET actual_arrival   = $2,
-    vessel_status    = 'berthed',
-    port_call_status = 'active',
-    updated_at       = NOW()
+SET actual_arrival      = $2,
+    vessel_status       = 'berthed',
+    port_call_status    = 'active',
+    risk_level_snapshot = $3,
+    priority_snapshot   = $4,
+    updated_at          = NOW()
 WHERE id = $1
 `
 
 type RegisterBerthingParams struct {
-	ID            int64              `json:"id"`
-	ActualArrival pgtype.Timestamptz `json:"actual_arrival"`
+	ID                int64              `json:"id"`
+	ActualArrival     pgtype.Timestamptz `json:"actual_arrival"`
+	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
+	PrioritySnapshot  *string            `json:"priority_snapshot"`
 }
 
-// Registra a atracação efetiva: data real de chegada + muda status para ativo.
+// Registra a atracação efetiva: data real de chegada + snapshot de risco/prioridade + muda status para ativo.
+// O snapshot é capturado aqui (estado do navio na chegada) e só pode ser alterado por uma inspeção.
 func (q *Queries) RegisterBerthing(ctx context.Context, arg RegisterBerthingParams) error {
-	_, err := q.db.Exec(ctx, registerBerthing, arg.ID, arg.ActualArrival)
+	_, err := q.db.Exec(ctx, registerBerthing,
+		arg.ID,
+		arg.ActualArrival,
+		arg.RiskLevelSnapshot,
+		arg.PrioritySnapshot,
+	)
 	return err
 }
 
 const registerDeparture = `-- name: RegisterDeparture :exec
 UPDATE port_calls
-SET actual_departure      = $2,
-    port_call_status      = 'completed',
-    risk_level_snapshot   = $3,
-    priority_snapshot     = $4,
-    updated_at            = NOW()
+SET actual_departure  = $2,
+    port_call_status  = 'completed',
+    updated_at        = NOW()
 WHERE id = $1
 `
 
 type RegisterDepartureParams struct {
-	ID                int64              `json:"id"`
-	ActualDeparture   pgtype.Timestamptz `json:"actual_departure"`
-	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
-	PrioritySnapshot  *string            `json:"priority_snapshot"`
+	ID              int64              `json:"id"`
+	ActualDeparture pgtype.Timestamptz `json:"actual_departure"`
 }
 
-// Registra a partida efetiva: data real de saída + snapshot + conclui a escala.
+// Registra a partida efetiva: data real de saída + conclui a escala.
+// O snapshot (risco/prioridade) já foi capturado na atracação — não é alterado aqui.
 func (q *Queries) RegisterDeparture(ctx context.Context, arg RegisterDepartureParams) error {
-	_, err := q.db.Exec(ctx, registerDeparture,
-		arg.ID,
-		arg.ActualDeparture,
-		arg.RiskLevelSnapshot,
-		arg.PrioritySnapshot,
-	)
+	_, err := q.db.Exec(ctx, registerDeparture, arg.ID, arg.ActualDeparture)
 	return err
 }
 

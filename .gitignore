@@ -23,4 +23,16 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# ── Agentes de IA / ferramentas de orquestração ─────────
+.claude/
+.agents/
+.grok/
+.codex/
+.cursor/
+.gemini/
+.superpowers/
+.aiox-core/
+.antigravity/
 .overclock-app/
+.mcp.json

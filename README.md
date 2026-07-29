@@ -1,6 +1,6 @@
 # psc-gvi
 
-**Port State Control — Sistema interno do Grupo de Vistoria e Inspeção (GVI)**  
+**Port State Control — Sistema interno do Grupo de Vistoria e Inspeção (GVI)**
 Delegacia da Capitania dos Portos em Itajaí, SC, Brasil.
 
 ## Sobre
@@ -8,7 +8,7 @@ Delegacia da Capitania dos Portos em Itajaí, SC, Brasil.
 Sistema interno para apoio às atividades de inspeção PSC nos portos de Itajaí e Navegantes.
 Automatiza a identificação de navios aptos à inspeção, registro de atracações e geração de relatórios mensais.
 
-A rotina diária consiste em: buscar navios previstos no ZP-21 → identificar o IMO via Equasis →
+Parte da rotina diária consiste em: buscar navios previstos no ZP-21 → identificar o IMO via Equasis →
 consultar histórico e grau de risco no CIALA → exibir no dashboard os navios na "janela de inspeção" (P1 ou P2).
 
 ## Stack
@@ -249,7 +249,7 @@ Acesse: `http://localhost:8080/login` — credenciais iniciais: `admin` / `admin
 
 ## Variáveis de ambiente
 
-Copie `.env.example` para `.env` e preencha os valores.  
+Copie `.env.example` para `.env` e preencha os valores.
 **Nunca comite o arquivo `.env`.**
 
 | Variável | Descrição |

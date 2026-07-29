@@ -76,5 +76,14 @@
 
   "forwardPorts": [8080, 5432],
 
+  "mounts": [
+    "source=/home/marcus/.ssh/agent.sock,target=/ssh-agent,type=bind"
+  ],
+
+  "containerEnv": {
+    "SSH_AUTH_SOCK": "/ssh-agent"
+
+}
+
   "postCreateCommand": "if [ -f go.mod ]; then go mod tidy; fi"
 }

@@ -25,6 +25,7 @@ Thumbs.db
 logs/
 
 # ── Agentes de IA / ferramentas de orquestração ─────────
+docs/stories
 .claude/
 .agents/
 .grok/

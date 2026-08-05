@@ -8,7 +8,7 @@ Delegacia da Capitania dos Portos em Itajaí, SC, Brasil.
 Sistema interno para apoio às atividades de inspeção PSC nos portos de Itajaí e Navegantes.
 Automatiza a identificação de navios aptos à inspeção, registro de atracações e geração de relatórios mensais.
 
-Parte da rotina diária consiste em: buscar navios previstos no ZP-21 → identificar o IMO via Equasis →
+Parte da rotina diária consiste em: buscar navios previstos no ZP-21 → identificar o IMO via VesselFinder →
 consultar histórico e grau de risco no CIALA → exibir no dashboard os navios na "janela de inspeção" (P1 ou P2).
 
 ## Stack
@@ -179,7 +179,7 @@ erDiagram
 
     VESSELS {
         bigint id PK
-        varchar imo "nullable — preenchido pelo Equasis"
+        varchar imo "nullable — preenchido pelo VesselFinder"
         varchar name
         varchar flag "nullable"
         int year_built "nullable"

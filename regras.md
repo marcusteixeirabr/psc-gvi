@@ -177,6 +177,22 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 
 ---
 
+### R8 — Cooldown: bloqueio de re-atracação no mesmo terminal em até 2 dias
+
+**Situação:** um navio concluiu uma escala (`completed`) em um terminal X, com `actual_departure`/`departed_date` registrado. Dentro dos **2 dias seguintes** a essa data (contados a partir da data real de desatracação), o ZP-21 passa a mostrar uma nova escala (entrada, ou entrada+saída) para o **mesmo navio** no **mesmo terminal**.
+
+**Interpretação:** um navio não desatraca e re-atraca no mesmo berço em menos de 2 dias — isso é sinal de ruído/incorreção do próprio site da ZP-21 (dado desatualizado, duplicado ou mal capturado), não uma nova escala real.
+
+**Comparação de terminal:** normalizada (minúsculas, sem espaços extras, sem acentuação) — mesmo padrão já usado para normalizar a coluna `Situação`.
+
+**Ação:** a entrada do ZP-21 é **ignorada** para fins de criação automática de escala — não deve disparar R1 (nem qualquer outra criação). Descarte silencioso, sem log dedicado.
+
+**Escopo:** aplica-se apenas à criação **automática** originada do ZP-21 (R1). **Não** se aplica a registro/edição manual por editores ou admin — um editor pode registrar uma nova escala real no mesmo terminal dentro da janela de 2 dias, se de fato aconteceu.
+
+**Estado da implementação:** ❌ Não implementado — especificação registrada em 2026-08-05 (Marcus definiu a regra, decidiu documentar antes de implementar).
+
+---
+
 ## 5. Atualização de Dados (sem mudança de status)
 
 **Situação:** escala `planned` ou `active` continua visível no ZP-21 normalmente.
@@ -225,3 +241,43 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 | P1 | Corrigir R3, R4/R5 e R7 no código (`service.go` e `port_call.sql`) | ✅ Implementado (2026-04-30) |
 | P2 | Navios com nome acentuado já no BD precisam de merge manual após fix de acentos | ⚠️ Aberto |
 | P3 | Renomear `P0` → `P3` em `internal/vessel/service.go` e em todo o código | ❌ Não feito |
+| P4 | Implementar R8 — cooldown de 2 dias para re-atracação no mesmo terminal | ❌ Não implementado |
+| P5 | Implementar minLength/maxLength na busca VesselFinder (LOA ±5%) | ❌ Não implementado |
+
+---
+
+## 9. Busca de IMO — VesselFinder
+
+**Fonte real:** vesselfinder.com (`internal/scraper/vesselfinder.go`). "Equasis" era terminologia desatualizada de planejamento — não existe scraper de equasis.org neste projeto (corrigido em 2026-08-05).
+
+### Situação atual (✅ implementada)
+
+- Busca por nome: `{VESSEL_FINDER_URL}/vessels?name={nome}`
+- Quando a busca retorna mais de um resultado, desambigua comparando LOA/Beam extraídos da tabela de resultados (`disambiguateByDimensions`):
+  - Match direto se LOA e Beam estiverem ambos dentro de ±5% (`WithinTolerance`)
+  - Fallback: melhor diferença proporcional combinada, aceito se ≤30%
+  - Sem dimensões locais (LOA/Beam do navio) → erro de ambiguidade, não resolvido automaticamente
+
+### Nova regra — filtro de LOA na URL (❌ não implementada)
+
+**Situação:** navio novo tem `vessels.length_m` preenchido (veio do ZP-21) no momento em que o scraper de IMO é acionado.
+
+**Ação:** incluir `minLength` e `maxLength` diretamente na URL de busca, filtrando no próprio VesselFinder antes mesmo de buscar por nome:
+
+```
+{VESSEL_FINDER_URL}/vessels?name={nome}&minLength={min}&maxLength={max}
+```
+
+- **Tolerância:** ±5% sobre o LOA — mesma tolerância já usada no código para desambiguação por dimensões, reaproveitada por consistência.
+- **Arredondamento:** `min`/`max` arredondados para inteiro — o campo do VesselFinder (`input#l-min`/`input#l-max`, name `minLength`/`maxLength`) só aceita dígitos (`maxlength="4"`, sem casas decimais).
+- **Exemplo:** LOA = 152 → `minLength=144&maxLength=160`.
+
+**Why:** para nomes de navio comuns, a busca só por nome pode retornar múltiplas páginas de resultado no VesselFinder, exigindo desambiguação manual. Filtrar por comprimento diretamente na URL reduz isso na origem.
+
+**Sem LOA:** se `vessels.length_m` estiver vazio, mantém o comportamento atual (busca só por nome).
+
+### Candidato futuro — Beam na URL (não decidido)
+
+Se mesmo com o filtro de LOA ainda houver ambiguidade recorrente, considerar incluir também o Beam (`vessels.beam_m`, campo "boca") na URL de busca. Marcus quer testar isoladamente com LOA primeiro antes de decidir se isso é necessário.
+
+**Estado da implementação:** ❌ Não implementado — especificação registrada em 2026-08-05.

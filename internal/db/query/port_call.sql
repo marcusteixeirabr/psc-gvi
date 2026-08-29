@@ -32,6 +32,18 @@ WHERE vessel_id = $1
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: GetRecentDeparturesByVessel :many
+-- R8: escalas concluídas do navio com desatracação a partir do timestamp dado.
+-- Usado para bloquear a criação automática (R1) de uma nova escala no mesmo
+-- terminal dentro do cooldown de 2 dias. Ver regras.md §4 R8.
+SELECT id, terminal, actual_departure
+FROM port_calls
+WHERE vessel_id = $1
+  AND port_call_status = 'completed'
+  AND actual_departure IS NOT NULL
+  AND actual_departure >= $2
+ORDER BY actual_departure DESC;
+
 -- name: UpdatePortCallZP21Seen :exec
 -- Registra o timestamp do ciclo de scraping em que o port call foi visto.
 -- Chamado para todo port call processado pelo scraper ZP-21.

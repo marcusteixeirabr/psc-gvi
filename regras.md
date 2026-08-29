@@ -189,7 +189,7 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 
 **Escopo:** aplica-se apenas à criação **automática** originada do ZP-21 (R1). **Não** se aplica a registro/edição manual por editores ou admin — um editor pode registrar uma nova escala real no mesmo terminal dentro da janela de 2 dias, se de fato aconteceu.
 
-**Estado da implementação:** ❌ Não implementado — especificação registrada em 2026-08-05 (Marcus definiu a regra, decidiu documentar antes de implementar).
+**Estado da implementação:** ✅ Implementado (2026-08-29) — `blockedByR8`/`normalizeTerminal` em `internal/portcall/service.go`, consultando `GetRecentDeparturesByVessel` (`internal/db/query/port_call.sql`).
 
 ---
 
@@ -241,8 +241,8 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 | P1 | Corrigir R3, R4/R5 e R7 no código (`service.go` e `port_call.sql`) | ✅ Implementado (2026-04-30) |
 | P2 | Navios com nome acentuado já no BD precisam de merge manual após fix de acentos | ⚠️ Aberto |
 | P3 | Renomear `P0` → `P3` em `internal/vessel/service.go` e em todo o código | ❌ Não feito |
-| P4 | Implementar R8 — cooldown de 2 dias para re-atracação no mesmo terminal | ❌ Não implementado |
-| P5 | Implementar minLength/maxLength na busca VesselFinder (LOA ±5%) | ❌ Não implementado |
+| P4 | Implementar R8 — cooldown de 2 dias para re-atracação no mesmo terminal | ✅ Implementado (2026-08-29) |
+| P5 | Implementar minLength/maxLength na busca VesselFinder (LOA ±5%) | ✅ Implementado (2026-08-29) |
 
 ---
 
@@ -258,7 +258,7 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
   - Fallback: melhor diferença proporcional combinada, aceito se ≤30%
   - Sem dimensões locais (LOA/Beam do navio) → erro de ambiguidade, não resolvido automaticamente
 
-### Nova regra — filtro de LOA na URL (❌ não implementada)
+### Filtro de LOA na URL (✅ implementado, 2026-08-29)
 
 **Situação:** navio novo tem `vessels.length_m` preenchido (veio do ZP-21) no momento em que o scraper de IMO é acionado.
 
@@ -275,6 +275,8 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 **Why:** para nomes de navio comuns, a busca só por nome pode retornar múltiplas páginas de resultado no VesselFinder, exigindo desambiguação manual. Filtrar por comprimento diretamente na URL reduz isso na origem.
 
 **Sem LOA:** se `vessels.length_m` estiver vazio, mantém o comportamento atual (busca só por nome).
+
+**Implementação:** `loaSearchRange` em `internal/scraper/vesselfinder.go`, aplicado em `SearchVesselFinder` (parâmetro `loa`) — usado por `FindIMO`. A busca direta por IMO (`ciala_handler.go`, quando LOA/Beam local é desconhecido) passa `loa=0` — sem filtro, pois a busca por IMO já é unívoca por natureza.
 
 ### Candidato futuro — Beam na URL (não decidido)
 

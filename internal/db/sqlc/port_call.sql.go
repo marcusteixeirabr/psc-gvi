@@ -392,6 +392,50 @@ func (q *Queries) GetPortCallByID(ctx context.Context, id int64) (PortCall, erro
 	return i, err
 }
 
+const getRecentDeparturesByVessel = `-- name: GetRecentDeparturesByVessel :many
+SELECT id, terminal, actual_departure
+FROM port_calls
+WHERE vessel_id = $1
+  AND port_call_status = 'completed'
+  AND actual_departure IS NOT NULL
+  AND actual_departure >= $2
+ORDER BY actual_departure DESC
+`
+
+type GetRecentDeparturesByVesselParams struct {
+	VesselID        int64              `json:"vessel_id"`
+	ActualDeparture pgtype.Timestamptz `json:"actual_departure"`
+}
+
+type GetRecentDeparturesByVesselRow struct {
+	ID              int64              `json:"id"`
+	Terminal        *string            `json:"terminal"`
+	ActualDeparture pgtype.Timestamptz `json:"actual_departure"`
+}
+
+// R8: escalas concluídas do navio com desatracação a partir do timestamp dado.
+// Usado para bloquear a criação automática (R1) de uma nova escala no mesmo
+// terminal dentro do cooldown de 2 dias. Ver regras.md §4 R8.
+func (q *Queries) GetRecentDeparturesByVessel(ctx context.Context, arg GetRecentDeparturesByVesselParams) ([]GetRecentDeparturesByVesselRow, error) {
+	rows, err := q.db.Query(ctx, getRecentDeparturesByVessel, arg.VesselID, arg.ActualDeparture)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetRecentDeparturesByVesselRow{}
+	for rows.Next() {
+		var i GetRecentDeparturesByVesselRow
+		if err := rows.Scan(&i.ID, &i.Terminal, &i.ActualDeparture); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getStaleBerthedPortCalls = `-- name: GetStaleBerthedPortCalls :many
 SELECT pc.id, pc.vessel_id,
        v.name AS vessel_name,

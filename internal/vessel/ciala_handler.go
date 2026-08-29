@@ -246,7 +246,7 @@ func (h *CIALAHandler) AtualizarDados(c *gin.Context) {
 	loaVal := numericToFloat(v.LengthM)
 	beamVal := numericToFloat(v.BeamM)
 	if loaVal == 0 || beamVal == 0 {
-		results, searchErr := scraper.SearchVesselFinder(c.Request.Context(), h.vesselFinderURL, imo)
+		results, searchErr := scraper.SearchVesselFinder(c.Request.Context(), h.vesselFinderURL, imo, 0)
 		if searchErr == nil && len(results) > 0 {
 			if len(results) > 1 && loaVal == 0 && beamVal == 0 {
 				redirectErr("Não foi possível resolver ambiguidade, entre com os dados manualmente.")

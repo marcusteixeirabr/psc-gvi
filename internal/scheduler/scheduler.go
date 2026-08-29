@@ -101,7 +101,14 @@ func (s *Scheduler) runZP21Cycle() {
 		return
 	}
 
-	result := portcall.ProcessManobras(ctx, s.queries, rows)
+	var refresher portcall.CIALARefresher
+	if s.cialaSession != nil {
+		refresher = func(ctx context.Context, vesselID int64, imo string) error {
+			_, err := lookupAndSaveCIALA(ctx, s.queries, s.cialaSession, vesselID, imo)
+			return err
+		}
+	}
+	result := portcall.ProcessManobras(ctx, s.queries, rows, refresher)
 
 	slog.Info("ciclo ZP-21 concluído", "component", "scheduler", "duracao", time.Since(start).Round(time.Millisecond), "resultado", result.Summary())
 

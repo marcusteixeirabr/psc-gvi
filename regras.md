@@ -193,6 +193,20 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 
 ---
 
+### R9 — Reconsulta do CIALA na atracação automática (navios P1/P2)
+
+**Situação:** a escala muda **automaticamente** para atracada (`vessel_status = 'berthed'`, `port_call_status = 'active'`) pelos critérios já estabelecidos — R2 (auto-atracação, `só saída` para escala `planned`) ou criação de escala já `berthed` em `createPortCallEntry` — e a prioridade do navio (calculada com os dados hoje em cache) é `P1` ou `P2`.
+
+**Motivo:** o registro de inspeções PSC realizadas em outros portos do Acordo de Viña del Mar pode ser lançado no CIALA em até 5 dias após a inspeção. Os dados do CIALA de um navio são verificados quando ele entra na previsão de escala do ZP-21 (Auto-CIALA, ver `internal/scheduler/auto_ciala.go`), mas pode levar mais de 5 dias entre essa previsão e a atracação efetiva. Como `risk_level_snapshot`/`priority_snapshot` são congelados no momento da atracação e nunca recalculados depois, o snapshot de um navio P1/P2 podia ficar permanentemente desatualizado.
+
+**Não se aplica quando:** a atracação é registrada **manualmente** pelo usuário (`escala_handler.go`: `Create` com `actual_arrival` informado, ou `RegisterBerthing` via botão dedicado).
+
+**Ação:** antes de gravar `risk_level_snapshot`/`priority_snapshot`, reconsulta o CIALA (`scraper.CIALAClient.LookupIMO`, via `CIALARefresher`) para o navio, atualiza `vessels.risk_level`/`last_inspection_date` (mesmo caminho de `UpdateVesselCIALA`/`UpdateVesselLastCIALACheck` já usado pelo Auto-CIALA) e só então recalcula a prioridade/risco para o snapshot, buscando o vessel atualizado (`GetVessel`). Se a reconsulta falhar, usa o dado em cache (mesmo comportamento anterior) e loga aviso.
+
+**Estado da implementação:** ✅ Implementado (2026-08-29) — `autoRegisterBerthing`/`CIALARefresher` em `internal/portcall/service.go`, reaproveitando `lookupAndSaveCIALA` (extraído de `RunAutoCIALA` em `internal/scheduler/auto_ciala.go`), com o refresher construído em `internal/scheduler/scheduler.go`.
+
+---
+
 ## 5. Atualização de Dados (sem mudança de status)
 
 **Situação:** escala `planned` ou `active` continua visível no ZP-21 normalmente.
@@ -243,6 +257,7 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 | P3 | Renomear `P0` → `P3` em `internal/vessel/service.go` e em todo o código | ✅ Já resolvido — código usa `P1`/`P2`/`P3`/`PNone` ("N/D"), sem `P0` (verificado em 2026-08-29) |
 | P4 | Implementar R8 — cooldown de 2 dias para re-atracação no mesmo terminal | ✅ Implementado (2026-08-29) |
 | P5 | Implementar minLength/maxLength na busca VesselFinder (LOA ±5%) | ✅ Implementado (2026-08-29) |
+| P6 | Implementar R9 — reconsultar CIALA na atracação automática de navios P1/P2 antes do snapshot | ✅ Implementado (2026-08-29) |
 
 ---
 

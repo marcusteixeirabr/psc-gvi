@@ -47,7 +47,7 @@ func (h *Handler) ScrapeZP21(c *gin.Context) {
 		return
 	}
 
-	result := ProcessManobras(c.Request.Context(), h.q, rows)
+	result := ProcessManobras(c.Request.Context(), h.q, rows, nil)
 	c.Redirect(http.StatusFound, addFlash("ZP-21: "+result.Summary()))
 }
 

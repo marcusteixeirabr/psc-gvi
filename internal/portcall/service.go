@@ -18,6 +18,11 @@ import (
 	"github.com/marcusteixeirabr/psc-gvi/internal/vessel"
 )
 
+// CIALARefresher busca dados atualizados do CIALA para o navio e persiste o
+// resultado em vessels (risk_level, last_inspection_date, etc.). nil quando o
+// CIALA não está configurado — nesse caso a reconsulta é pulada (ver regras.md §4 R9).
+type CIALARefresher func(ctx context.Context, vesselID int64, imo string) error
+
 // ScrapeResult resume o resultado de um ciclo de scraping ZP-21.
 type ScrapeResult struct {
 	RowsFound        int
@@ -40,12 +45,12 @@ func (r ScrapeResult) Summary() string {
 }
 
 // ProcessManobras processa as linhas parseadas do ZP-21 e atualiza o banco de dados.
-func ProcessManobras(ctx context.Context, q *sqlc.Queries, rows []scraper.ManobrasRow) ScrapeResult {
+func ProcessManobras(ctx context.Context, q *sqlc.Queries, rows []scraper.ManobrasRow, refresher CIALARefresher) ScrapeResult {
 	result := ScrapeResult{RowsFound: len(rows)}
 	scrapeTime := time.Now() // timestamp único para todo o ciclo — identifica o lote no dashboard
 
 	for _, group := range groupRows(rows) {
-		if err := processGroup(ctx, q, group, &result, scrapeTime); err != nil {
+		if err := processGroup(ctx, q, group, &result, scrapeTime, refresher); err != nil {
 			name := group[0].VesselName
 			slog.Error("erro processando vessel", "component", "portcall", "vessel", name, "error", err)
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
@@ -111,7 +116,7 @@ func sameVessel(a, b scraper.ManobrasRow) bool {
 }
 
 // processGroup trata todas as linhas de um mesmo vessel em um único ciclo.
-func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.ManobrasRow, result *ScrapeResult, scrapeTime time.Time) error {
+func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.ManobrasRow, result *ScrapeResult, scrapeTime time.Time, refresher CIALARefresher) error {
 	ref := group[0]
 
 	// 1. Identifica ou cria o vessel no banco.
@@ -147,7 +152,7 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 			return nil
 		}
 		// Nenhum port call ativo — cria novo.
-		return createPortCallEntry(ctx, q, v, entrada, saida, result, scrapeTime)
+		return createPortCallEntry(ctx, q, v, entrada, saida, result, scrapeTime, refresher)
 	}
 
 	// ── R7: conclusão automática por partida confirmada (active+berthed) ────────
@@ -185,7 +190,7 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 			if pc.EtaDate.Valid {
 				berthDate = pc.EtaDate.Time
 			}
-			if err := autoRegisterBerthing(ctx, q, pc.ID, berthDate, v.RiskLevel, v.LastInspectionDate); err != nil {
+			if err := autoRegisterBerthing(ctx, q, pc.ID, berthDate, v, refresher); err != nil {
 				slog.Error("auto-atracação falhou", "component", "portcall", "vessel", v.Name, "error", err)
 			} else {
 				slog.Info("auto-atracação registrada", "component", "portcall", "vessel", v.Name, "data", berthDate.Format("02/01/2006"))
@@ -258,7 +263,7 @@ func normalizeTerminal(s string) string {
 
 // createPortCallEntry cria um novo port call para o vessel com os dados ZP-21.
 // Detecta auto-atracação quando apenas linha de saída está visível.
-func createPortCallEntry(ctx context.Context, q *sqlc.Queries, v sqlc.Vessel, entrada, saida *scraper.ManobrasRow, result *ScrapeResult, scrapeTime time.Time) error {
+func createPortCallEntry(ctx context.Context, q *sqlc.Queries, v sqlc.Vessel, entrada, saida *scraper.ManobrasRow, result *ScrapeResult, scrapeTime time.Time, refresher CIALARefresher) error {
 	initialStatus := "navigating"
 	if entrada == nil && saida != nil {
 		initialStatus = "berthed"
@@ -282,7 +287,7 @@ func createPortCallEntry(ctx context.Context, q *sqlc.Queries, v sqlc.Vessel, en
 	markZP21Seen(ctx, q, newPC.ID, scrapeTime)
 
 	if initialStatus == "berthed" {
-		if err := autoRegisterBerthing(ctx, q, newPC.ID, time.Now(), v.RiskLevel, v.LastInspectionDate); err != nil {
+		if err := autoRegisterBerthing(ctx, q, newPC.ID, time.Now(), v, refresher); err != nil {
 			slog.Error("auto-atracação falhou na criação", "component", "portcall", "vessel", v.Name, "error", err)
 		} else {
 			slog.Info("auto-atracação registrada na criação (data corrente)", "component", "portcall", "vessel", v.Name)
@@ -317,7 +322,27 @@ func markZP21Seen(ctx context.Context, q *sqlc.Queries, portCallID int64, t time
 
 // autoRegisterBerthing registra a atracação automática via ZP-21 com snapshot de risco/prioridade.
 // Só age se actual_arrival ainda estiver vazio (hierarquia: dado consolidado > automático).
-func autoRegisterBerthing(ctx context.Context, q *sqlc.Queries, portCallID int64, date time.Time, riskLevel *string, lastInspDate pgtype.Date) error {
+func autoRegisterBerthing(ctx context.Context, q *sqlc.Queries, portCallID int64, date time.Time, v sqlc.Vessel, refresher CIALARefresher) error {
+	riskLevel := v.RiskLevel
+	lastInspDate := v.LastInspectionDate
+
+	// R9: para navios cuja prioridade calculada com o dado em cache já é P1/P2,
+	// reconsulta o CIALA antes de congelar o snapshot — o Acordo de Viña del Mar
+	// permite lançar uma inspeção feita em outro porto até 5 dias depois, janela
+	// maior que o intervalo entre a previsão do ZP-21 e a atracação real. Só se
+	// aplica à atracação automática (ver regras.md §4 R9).
+	if refresher != nil && v.Imo != nil {
+		cached := vessel.CalcPriority(riskLevel, lastInspDate)
+		if cached == vessel.P1 || cached == vessel.P2 {
+			if err := refresher(ctx, v.ID, *v.Imo); err != nil {
+				slog.Warn("R9: reconsulta CIALA na atracação falhou, usando dado em cache", "component", "portcall", "vessel", v.Name, "error", err)
+			} else if fresh, gErr := q.GetVessel(ctx, v.ID); gErr == nil {
+				riskLevel = fresh.RiskLevel
+				lastInspDate = fresh.LastInspectionDate
+			}
+		}
+	}
+
 	var ts pgtype.Timestamptz
 	_ = ts.Scan(midnightOf(date))
 	priority := vessel.CalcPriority(riskLevel, lastInspDate)

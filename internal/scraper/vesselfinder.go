@@ -37,7 +37,7 @@ func FindIMO(ctx context.Context, baseURL, vesselName string, loa, beam float64)
 		return "", fmt.Errorf("VESSEL_FINDER_URL não configurada")
 	}
 
-	results, err := SearchVesselFinder(ctx, baseURL, vesselName)
+	results, err := SearchVesselFinder(ctx, baseURL, vesselName, loa)
 	if err != nil {
 		return "", err
 	}
@@ -58,8 +58,16 @@ func FindIMO(ctx context.Context, baseURL, vesselName string, loa, beam float64)
 
 // SearchVesselFinder busca na página de resultados do VesselFinder e extrai candidatos.
 // Pode ser chamado com o nome do navio OU com o número IMO como termo de busca.
-func SearchVesselFinder(ctx context.Context, baseURL, vesselName string) ([]VesselFinderResult, error) {
+//
+// loa, quando > 0, filtra a busca por minLength/maxLength (±5%) diretamente na URL —
+// reduz a paginação/desambiguação manual para nomes comuns de navio. Ver regras.md §9.
+// Passe 0 para não aplicar o filtro (ex: busca por IMO, já unívoca por natureza).
+func SearchVesselFinder(ctx context.Context, baseURL, vesselName string, loa float64) ([]VesselFinderResult, error) {
 	searchURL := baseURL + "/vessels?name=" + url.QueryEscape(vesselName)
+	if loa > 0 {
+		minLen, maxLen := loaSearchRange(loa)
+		searchURL += fmt.Sprintf("&minLength=%d&maxLength=%d", minLen, maxLen)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
@@ -227,6 +235,13 @@ func disambiguateByDimensions(vesselName string, candidates []VesselFinderResult
 
 	return "", fmt.Errorf("ambíguo: %d resultados para %q — nenhuma dimensão bateu (LOA %.1f, Beam %.1f)",
 		len(candidates), vesselName, loa, beam)
+}
+
+// loaSearchRange calcula minLength/maxLength (±5% do LOA, arredondado para
+// inteiro) para o filtro de comprimento na URL de busca do VesselFinder — o
+// campo do site só aceita dígitos, sem casas decimais. Ver regras.md §9.
+func loaSearchRange(loa float64) (min, max int) {
+	return int(math.Round(loa * 0.95)), int(math.Round(loa * 1.05))
 }
 
 // dimPattern encontra "LOA / Beam" do VesselFinder: ex "300 / 48" ou "189.5 / 32.0".

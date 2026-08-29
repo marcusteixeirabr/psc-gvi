@@ -140,6 +140,12 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("buscando port call ativo: %w", err)
 		}
+		// R8: navio desatracou do mesmo terminal (normalizado) há menos de 2 dias —
+		// trata como ruído/incorreção do ZP-21 e ignora a criação automática.
+		// Só se aplica a R1 (automático); registro manual não é afetado.
+		if blockedByR8(ctx, q, v.ID, terminalOf(entrada, saida)) {
+			return nil
+		}
 		// Nenhum port call ativo — cria novo.
 		return createPortCallEntry(ctx, q, v, entrada, saida, result, scrapeTime)
 	}
@@ -212,6 +218,42 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 	}
 
 	return nil
+}
+
+// r8CooldownWindow é a janela de bloqueio de re-atracação no mesmo terminal (R8).
+const r8CooldownWindow = 48 * time.Hour
+
+// blockedByR8 verifica se o navio desatracou do mesmo terminal (normalizado)
+// dentro do cooldown de 2 dias — nesse caso a criação automática de escala (R1)
+// deve ser ignorada silenciosamente, pois é sinal de dado desatualizado/duplicado
+// do ZP-21, não uma nova escala real. Ver regras.md §4 R8.
+func blockedByR8(ctx context.Context, q *sqlc.Queries, vesselID int64, incomingTerminal string) bool {
+	terminal := normalizeTerminal(incomingTerminal)
+	if terminal == "" {
+		return false
+	}
+	var since pgtype.Timestamptz
+	_ = since.Scan(time.Now().Add(-r8CooldownWindow))
+	recent, err := q.GetRecentDeparturesByVessel(ctx, sqlc.GetRecentDeparturesByVesselParams{
+		VesselID:        vesselID,
+		ActualDeparture: since,
+	})
+	if err != nil {
+		slog.Error("R8: falha ao verificar cooldown de terminal", "component", "portcall", "vessel_id", vesselID, "error", err)
+		return false
+	}
+	for _, rc := range recent {
+		if rc.Terminal != nil && normalizeTerminal(*rc.Terminal) == terminal {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeTerminal normaliza terminal para comparação: minúsculas, sem espaços
+// e sem acentos — mesmo padrão usado para normalizar a coluna Situação do ZP-21.
+func normalizeTerminal(s string) string {
+	return strings.Join(strings.Fields(scraper.StripAccents(strings.ToLower(s))), "")
 }
 
 // createPortCallEntry cria um novo port call para o vessel com os dados ZP-21.

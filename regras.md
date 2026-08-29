@@ -280,4 +280,29 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 
 Se mesmo com o filtro de LOA ainda houver ambiguidade recorrente, considerar incluir também o Beam (`vessels.beam_m`, campo "boca") na URL de busca. Marcus quer testar isoladamente com LOA primeiro antes de decidir se isso é necessário.
 
+---
+
+## 10. Relatório Mensal e KPI — Hierarquia de Status por Navio
+
+**Contexto:** um navio pode ter 2+ port calls (escalas) no mesmo mês. O relatório e o KPI mostram 1 único registro por navio/mês — nunca uma linha por escala.
+
+### Hierarquia de status (✅ implementada)
+
+Aplicada sobre TODAS as escalas do navio no mês, não só a mais recente:
+
+1. **Inspecionado** — se qualquer escala do mês resultou em inspeção registrada.
+2. **Não inspecionado na janela** — nenhuma escala foi inspecionada, mas ao menos uma esteve em P1/P2 no snapshot.
+3. **Fora da janela** — todas as escalas do mês foram P3/N/A/N/D.
+
+**Regra derivada:** uma escala mais antiga do navio no mês que já teve inspeção "vence" sobre uma escala posterior sem inspeção — o navio continua aparecendo como inspecionado no relatório/KPI daquele mês, mesmo que a escala mais recente não tenha sido inspecionada.
+
+### O que muda entre exibição e status
+
+- Os campos de exibição da linha do relatório (terminal, ETA/ETD, risco, prioridade) sempre vêm da escala mais recente do navio no mês (`actual_arrival DESC`) — isso não muda.
+- O status de inspeção (`inspection_id`/`inspection_result`/`inspection_date`, e os contadores `sujeitos`/`inspected` do KPI) é calculado agregando TODAS as escalas do navio no mês, via CTEs separadas (`vessel_inspection` em `ListReportEntries`, `vessel_agg` em `CountReportKPI`).
+
+**Antes desta correção:** ambas as queries já deduplicavam por navio (1 linha/navio, sem contagem duplicada — commit `13f98bd`), mas escolhiam a inspeção/prioridade só da escala mais recente. Uma inspeção numa escala mais antiga do mês era silenciosamente perdida quando havia escala posterior sem inspeção.
+
+**Implementado** em `ListReportEntries` e `CountReportKPI` (`internal/db/query/port_call.sql`).
+
 **Estado da implementação:** ❌ Não implementado — especificação registrada em 2026-08-05.

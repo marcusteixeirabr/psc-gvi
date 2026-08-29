@@ -95,35 +95,42 @@ func (q *Queries) CountEscalas(ctx context.Context, arg CountEscalasParams) (int
 }
 
 const countReportKPI = `-- name: CountReportKPI :one
-WITH last_per_vessel AS (
-    SELECT DISTINCT ON (pc.vessel_id)
-        pc.id, pc.vessel_id, pc.priority_snapshot,
-        v.afretado AS vessel_afretado, v.flag AS vessel_flag
+WITH period_calls AS (
+    SELECT pc.id, pc.vessel_id, pc.priority_snapshot
     FROM port_calls pc
     JOIN vessels v ON v.id = pc.vessel_id
     WHERE v.acompanhado = TRUE
       AND pc.actual_arrival IS NOT NULL
       AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
       AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
-    ORDER BY pc.vessel_id, pc.actual_arrival DESC
+),
+vessel_agg AS (
+    SELECT
+        pcs.vessel_id,
+        BOOL_OR(pcs.priority_snapshot IN ('P1','P2')) AS any_in_window,
+        BOOL_OR(ins.id IS NOT NULL) AS any_inspected
+    FROM period_calls pcs
+    LEFT JOIN inspections ins ON ins.port_call_id = pcs.id
+    GROUP BY pcs.vessel_id
 )
 SELECT
     COUNT(*) AS total_porto,
     COUNT(*) FILTER (
-        WHERE lpv.vessel_afretado = FALSE
-          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
     ) AS estrangeiros,
     COUNT(*) FILTER (
-        WHERE lpv.vessel_afretado = FALSE
-          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
-          AND (lpv.priority_snapshot IN ('P1','P2') OR ins.id IS NOT NULL)
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+          AND (va.any_in_window OR va.any_inspected)
     ) AS sujeitos,
-    COUNT(ins.id) FILTER (
-        WHERE lpv.vessel_afretado = FALSE
-          AND (lpv.vessel_flag IS NULL OR LOWER(TRIM(lpv.vessel_flag)) NOT IN ('brazil','brasil'))
+    COUNT(*) FILTER (
+        WHERE v.afretado = FALSE
+          AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
+          AND va.any_inspected
     ) AS inspected
-FROM last_per_vessel lpv
-LEFT JOIN inspections ins ON ins.port_call_id = lpv.id
+FROM vessel_agg va
+JOIN vessels v ON v.id = va.vessel_id
 `
 
 type CountReportKPIParams struct {
@@ -138,11 +145,14 @@ type CountReportKPIRow struct {
 	Inspected    int64 `json:"inspected"`
 }
 
-// KPI do mês: cada navio conta uma única vez (última escala com atracação no período).
+// KPI do mês: cada navio conta uma única vez.
 // total_porto   = navios únicos com atracação no mês
 // estrangeiros  = estrangeiros não-afretados (únicos)
-// sujeitos      = estrangeiros com P1/P2 no snapshot OU já inspecionados
-// inspected     = estrangeiros com inspeção registrada
+// sujeitos      = estrangeiros com QUALQUER escala do mês em P1/P2 OU já inspecionados
+// inspected     = estrangeiros com QUALQUER escala do mês inspecionada
+// Hierarquia de status (regras.md §10): inspecionado > não inspecionado na janela >
+// fora da janela. Por isso a agregação olha TODAS as escalas do navio no mês, não
+// só a mais recente.
 func (q *Queries) CountReportKPI(ctx context.Context, arg CountReportKPIParams) (CountReportKPIRow, error) {
 	row := q.db.QueryRow(ctx, countReportKPI, arg.Year, arg.Month)
 	var i CountReportKPIRow
@@ -911,6 +921,16 @@ vessel_first_arrival AS (
     SELECT vessel_id, MIN(arrival_date) AS first_arrival
     FROM period_vessels GROUP BY vessel_id
 ),
+vessel_inspection AS (
+    SELECT DISTINCT ON (pv.vessel_id)
+        pv.vessel_id,
+        ins.id AS inspection_id,
+        ins.result AS inspection_result,
+        ins.inspection_date
+    FROM period_vessels pv
+    JOIN inspections ins ON ins.port_call_id = pv.id
+    ORDER BY pv.vessel_id, ins.inspection_date DESC, ins.id DESC
+),
 ranked AS (
     SELECT
         pc.id, pc.vessel_id, pc.terminal,
@@ -920,7 +940,6 @@ ranked AS (
         v.name AS vessel_name, v.imo AS vessel_imo, v.flag AS vessel_flag,
         v.afretado AS vessel_afretado, v.year_built AS vessel_year_built,
         v.vessel_type AS vessel_type,
-        ins.id AS inspection_id, ins.result AS inspection_result, ins.inspection_date,
         vfa.first_arrival,
         ROW_NUMBER() OVER (
             -- Última atracação real do navio no período (sem fallback para planejadas).
@@ -931,23 +950,23 @@ ranked AS (
     JOIN port_calls pc ON pc.id = pv.id
     JOIN vessels v ON v.id = pc.vessel_id
     JOIN vessel_first_arrival vfa ON vfa.vessel_id = pc.vessel_id
-    LEFT JOIN inspections ins ON ins.port_call_id = pc.id
 )
-SELECT id, vessel_id, terminal, eta_date, etd_date,
-       actual_arrival, actual_departure, port_call_status,
-       risk_level_snapshot, priority_snapshot,
-       vessel_name, vessel_imo, vessel_flag, vessel_afretado,
-       vessel_year_built, vessel_type,
-       inspection_id, inspection_result, inspection_date
-FROM ranked
-WHERE rn = 1
+SELECT r.id, r.vessel_id, r.terminal, r.eta_date, r.etd_date,
+       r.actual_arrival, r.actual_departure, r.port_call_status,
+       r.risk_level_snapshot, r.priority_snapshot,
+       r.vessel_name, r.vessel_imo, r.vessel_flag, r.vessel_afretado,
+       r.vessel_year_built, r.vessel_type,
+       vi.inspection_id, vi.inspection_result, vi.inspection_date
+FROM ranked r
+LEFT JOIN vessel_inspection vi ON vi.vessel_id = r.vessel_id
+WHERE r.rn = 1
 ORDER BY
     -- Estrangeiros não afretados primeiro; brasileiros e afretados no final.
-    CASE WHEN vessel_afretado = FALSE
-              AND (vessel_flag IS NULL OR LOWER(TRIM(vessel_flag)) NOT IN ('brazil','brasil'))
+    CASE WHEN r.vessel_afretado = FALSE
+              AND (r.vessel_flag IS NULL OR LOWER(TRIM(r.vessel_flag)) NOT IN ('brazil','brasil'))
          THEN 0 ELSE 1 END ASC,
-    actual_arrival ASC NULLS LAST,
-    vessel_name ASC
+    r.actual_arrival ASC NULLS LAST,
+    r.vessel_name ASC
 `
 
 type ListReportEntriesParams struct {
@@ -977,9 +996,15 @@ type ListReportEntriesRow struct {
 	InspectionDate    pgtype.Date        `json:"inspection_date"`
 }
 
-// Uma linha por navio (última escala do período).
+// Uma linha por navio (última escala do período para os dados de exibição).
 // Estrangeiros não-afretados primeiro, ordenados pela primeira atracação do navio no período.
 // Afretados e nacionais sempre por último.
+// Hierarquia de status: se QUALQUER escala do navio no mês teve inspeção, o navio
+// aparece como inspecionado — mesmo que a escala mais recente (usada para exibir
+// terminal/ETA/ETD/risco/prioridade) não tenha sido inspecionada. Ver regras.md §10.
+// Inspeção do navio no mês: agrega sobre TODAS as escalas do período, não só a
+// mais recente. Se houver mais de uma escala inspecionada no mesmo mês (raro),
+// mostra a inspeção mais recente.
 func (q *Queries) ListReportEntries(ctx context.Context, arg ListReportEntriesParams) ([]ListReportEntriesRow, error) {
 	rows, err := q.db.Query(ctx, listReportEntries, arg.Year, arg.Month)
 	if err != nil {

@@ -143,15 +143,13 @@ func (h *EscalaHandler) NewSave(c *gin.Context) {
 func (h *EscalaHandler) List(c *gin.Context) {
 	now := time.Now()
 
-	statusFilter := c.DefaultQuery("status", "")
-	monthStr := c.DefaultQuery("mes", "") // "" = todos os meses
+	monthStr := c.DefaultQuery("mes", "") // "" = últimos 30 dias (default)
 	year, month := parseYearMonth(monthStr)
 
 	vesselIDStr := c.DefaultQuery("vessel_id", "0")
 	vesselID, _ := strconv.ParseInt(vesselIDStr, 10, 64)
 
 	params := sqlc.CountEscalasParams{
-		Status:   statusFilter,
 		VesselID: vesselID,
 		Year:     int32(year),
 		Month:    int32(month),
@@ -166,7 +164,6 @@ func (h *EscalaHandler) List(c *gin.Context) {
 	pg := pagination.FromQuery(c, int(total), pagination.DefaultPageSize)
 
 	rows, err := h.q.ListEscalasPaged(c.Request.Context(), sqlc.ListEscalasPagedParams{
-		Status:     statusFilter,
 		VesselID:   vesselID,
 		Year:       int32(year),
 		Month:      int32(month),
@@ -185,15 +182,14 @@ func (h *EscalaHandler) List(c *gin.Context) {
 	months := buildMonthOptions(now)
 
 	c.HTML(http.StatusOK, "escalas.html", gin.H{
-		"User":      auth.GetUser(c),
-		"Entries":   entries,
-		"MesSel":    monthStr,
-		"Months":    months,
-		"StatusSel": statusFilter,
-		"VesselID":  vesselID,
-		"Flash":     c.Query("flash"),
-		"Error":     c.Query("error"),
-		"Page":      pg,
+		"User":     auth.GetUser(c),
+		"Entries":  entries,
+		"MesSel":   monthStr,
+		"Months":   months,
+		"VesselID": vesselID,
+		"Flash":    c.Query("flash"),
+		"Error":    c.Query("error"),
+		"Page":     pg,
 	})
 }
 
@@ -667,7 +663,7 @@ func nullableStr(s string) *string {
 }
 
 func parseYearMonth(s string) (int, int) {
-	// String vazia = "todos os meses" → year=0, month=0 passa pelo filtro SQL sem restrição.
+	// String vazia = default (últimos 30 dias) → year=0, month=0 passa pelo filtro SQL sem restrição de mês.
 	if s == "" {
 		return 0, 0
 	}
@@ -687,7 +683,7 @@ type MonthOption struct {
 
 func buildMonthOptions(now time.Time) []MonthOption {
 	months := make([]MonthOption, 13)
-	months[0] = MonthOption{Value: "", Label: "Todos os meses"}
+	months[0] = MonthOption{Value: "", Label: "Últimos 30 dias"}
 	for i := 0; i < 12; i++ {
 		t := now.AddDate(0, -i, 0)
 		months[i+1] = MonthOption{

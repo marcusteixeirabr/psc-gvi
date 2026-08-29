@@ -437,40 +437,73 @@ FROM vessel_agg va
 JOIN vessels v ON v.id = va.vessel_id;
 
 -- name: CountEscalas :one
--- Conta escalas com os mesmos filtros de ListEscalas — usado para paginação.
+-- Conta escalas com os mesmos filtros de ListEscalasPaged — usado para paginação.
+-- Sem status: mês selecionado (year != 0) mostra só aquele mês; navio selecionado
+-- sem mês mostra o histórico completo do navio; default (sem mês, sem navio)
+-- limita aos últimos 30 dias (só piso, sem teto — ver regras.md e escala_handler.go).
 SELECT COUNT(*)::int
 FROM port_calls pc
 JOIN vessels v ON v.id = pc.vessel_id
-WHERE (sqlc.arg(status)::text = '' OR pc.port_call_status = sqlc.arg(status)::text)
-  AND (sqlc.arg(vessel_id)::bigint = 0 OR pc.vessel_id = sqlc.arg(vessel_id)::bigint)
-  AND (sqlc.arg(year)::int = 0
-       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(year)::int)
-  AND (sqlc.arg(month)::int = 0
-       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(month)::int);
+WHERE (sqlc.arg(vessel_id)::bigint = 0 OR pc.vessel_id = sqlc.arg(vessel_id)::bigint)
+  AND (
+    (sqlc.arg(year)::int != 0
+        AND EXTRACT(YEAR  FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(year)::int
+        AND EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(month)::int)
+    OR (sqlc.arg(year)::int = 0 AND sqlc.arg(vessel_id)::bigint != 0)
+    OR (sqlc.arg(year)::int = 0 AND sqlc.arg(vessel_id)::bigint = 0
+        AND COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date) >= CURRENT_DATE - INTERVAL '30 days')
+  );
 
 -- name: ListEscalasPaged :many
 -- Lista escalas com paginação (LIMIT 50 OFFSET). NÃO modifica ListEscalas.
-SELECT
-    pc.id, pc.vessel_id, pc.terminal,
-    pc.eta_date, pc.etd_date,
-    pc.actual_arrival, pc.actual_departure,
-    pc.vessel_status, pc.port_call_status,
-    pc.risk_level_snapshot, pc.priority_snapshot,
-    v.name AS vessel_name, v.imo AS vessel_imo,
-    v.flag AS vessel_flag, v.afretado AS vessel_afretado, v.acompanhado AS vessel_acompanhado,
-    v.risk_level AS vessel_risk_level,
-    v.last_inspection_date AS vessel_last_inspection_date,
-    ins.id     AS inspection_id,
-    ins.result AS inspection_result
-FROM port_calls pc
-JOIN vessels v ON v.id = pc.vessel_id
-LEFT JOIN inspections ins ON ins.port_call_id = pc.id
-WHERE (sqlc.arg(status)::text = '' OR pc.port_call_status = sqlc.arg(status)::text)
-  AND (sqlc.arg(vessel_id)::bigint = 0 OR pc.vessel_id = sqlc.arg(vessel_id)::bigint)
-  AND (sqlc.arg(year)::int = 0
-       OR EXTRACT(YEAR FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(year)::int)
-  AND (sqlc.arg(month)::int = 0
-       OR EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(month)::int)
-ORDER BY COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date) ASC NULLS LAST,
-         pc.created_at ASC
+-- Mesmos 3 casos de filtro de CountEscalas (sem status).
+-- Ordenação: com mês selecionado, cronológica simples (asc). Sem mês selecionado
+-- (default ou navio específico), agrupa por status — Atracados/Planejados (asc)
+-- antes de Concluídas/Canceladas (desc) — via status_rank computado na CTE.
+WITH filtered AS (
+    SELECT
+        pc.id, pc.vessel_id, pc.terminal,
+        pc.eta_date, pc.etd_date,
+        pc.actual_arrival, pc.actual_departure,
+        pc.vessel_status, pc.port_call_status,
+        pc.risk_level_snapshot, pc.priority_snapshot,
+        v.name AS vessel_name, v.imo AS vessel_imo,
+        v.flag AS vessel_flag, v.afretado AS vessel_afretado, v.acompanhado AS vessel_acompanhado,
+        v.risk_level AS vessel_risk_level,
+        v.last_inspection_date AS vessel_last_inspection_date,
+        ins.id     AS inspection_id,
+        ins.result AS inspection_result,
+        COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date) AS sort_date,
+        CASE WHEN sqlc.arg(year)::int != 0 THEN NULL ELSE
+            CASE pc.port_call_status
+                WHEN 'active'    THEN 0
+                WHEN 'planned'   THEN 1
+                WHEN 'completed' THEN 2
+                WHEN 'closed'    THEN 2
+                WHEN 'aborted'   THEN 3
+                ELSE 4
+            END
+        END AS status_rank
+    FROM port_calls pc
+    JOIN vessels v ON v.id = pc.vessel_id
+    LEFT JOIN inspections ins ON ins.port_call_id = pc.id
+    WHERE (sqlc.arg(vessel_id)::bigint = 0 OR pc.vessel_id = sqlc.arg(vessel_id)::bigint)
+      AND (
+        (sqlc.arg(year)::int != 0
+            AND EXTRACT(YEAR  FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(year)::int
+            AND EXTRACT(MONTH FROM COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date)) = sqlc.arg(month)::int)
+        OR (sqlc.arg(year)::int = 0 AND sqlc.arg(vessel_id)::bigint != 0)
+        OR (sqlc.arg(year)::int = 0 AND sqlc.arg(vessel_id)::bigint = 0
+            AND COALESCE(pc.actual_departure::date, pc.actual_arrival::date, pc.eta_date) >= CURRENT_DATE - INTERVAL '30 days')
+      )
+)
+SELECT id, vessel_id, terminal, eta_date, etd_date, actual_arrival, actual_departure,
+       vessel_status, port_call_status, risk_level_snapshot, priority_snapshot,
+       vessel_name, vessel_imo, vessel_flag, vessel_afretado, vessel_acompanhado,
+       vessel_risk_level, vessel_last_inspection_date, inspection_id, inspection_result
+FROM filtered
+ORDER BY
+    status_rank ASC NULLS FIRST,
+    CASE WHEN status_rank IS NULL OR status_rank IN (0,1) THEN sort_date END ASC NULLS LAST,
+    CASE WHEN status_rank IN (2,3,4) THEN sort_date END DESC NULLS LAST
 LIMIT 50 OFFSET sqlc.arg(page_offset)::int;

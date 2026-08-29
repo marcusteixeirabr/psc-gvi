@@ -69,12 +69,6 @@
       <option value="{{.Value}}" {{if eq .Value $.MesSel}}selected{{end}}>{{.Label}}</option>
       {{end}}
     </select>
-    <select name="status">
-      <option value="" {{if eq $.StatusSel ""}}selected{{end}}>Todos os status</option>
-      <option value="planned"   {{if eq $.StatusSel "planned"}}selected{{end}}>Planejadas</option>
-      <option value="active"    {{if eq $.StatusSel "active"}}selected{{end}}>Atracados</option>
-      <option value="completed" {{if eq $.StatusSel "completed"}}selected{{end}}>Concluídas</option>
-    </select>
     <button type="submit">Filtrar</button>
     {{if .VesselID}}
     <a href="/escalas?vessel_id={{.VesselID}}" style="color:#718096;font-size:0.82rem;margin-left:0.25rem">Limpar filtros</a>

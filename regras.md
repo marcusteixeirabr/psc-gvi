@@ -240,7 +240,7 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 |---|---------|--------|
 | P1 | Corrigir R3, R4/R5 e R7 no código (`service.go` e `port_call.sql`) | ✅ Implementado (2026-04-30) |
 | P2 | Navios com nome acentuado já no BD precisam de merge manual após fix de acentos | ⚠️ Aberto |
-| P3 | Renomear `P0` → `P3` em `internal/vessel/service.go` e em todo o código | ❌ Não feito |
+| P3 | Renomear `P0` → `P3` em `internal/vessel/service.go` e em todo o código | ✅ Já resolvido — código usa `P1`/`P2`/`P3`/`PNone` ("N/D"), sem `P0` (verificado em 2026-08-29) |
 | P4 | Implementar R8 — cooldown de 2 dias para re-atracação no mesmo terminal | ✅ Implementado (2026-08-29) |
 | P5 | Implementar minLength/maxLength na busca VesselFinder (LOA ±5%) | ✅ Implementado (2026-08-29) |
 
@@ -306,5 +306,3 @@ Aplicada sobre TODAS as escalas do navio no mês, não só a mais recente:
 **Antes desta correção:** ambas as queries já deduplicavam por navio (1 linha/navio, sem contagem duplicada — commit `13f98bd`), mas escolhiam a inspeção/prioridade só da escala mais recente. Uma inspeção numa escala mais antiga do mês era silenciosamente perdida quando havia escala posterior sem inspeção.
 
 **Implementado** em `ListReportEntries` e `CountReportKPI` (`internal/db/query/port_call.sql`).
-
-**Estado da implementação:** ❌ Não implementado — especificação registrada em 2026-08-05.

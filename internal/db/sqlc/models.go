@@ -19,24 +19,25 @@ type Inspection struct {
 }
 
 type PortCall struct {
-	ID                int64              `json:"id"`
-	VesselID          int64              `json:"vessel_id"`
-	Berth             *string            `json:"berth"`
-	VesselStatus      string             `json:"vessel_status"`
-	PortCallStatus    string             `json:"port_call_status"`
-	EtaDate           pgtype.Date        `json:"eta_date"`
-	EtaTime           pgtype.Time        `json:"eta_time"`
-	EtdDate           pgtype.Date        `json:"etd_date"`
-	EtdTime           pgtype.Time        `json:"etd_time"`
-	ActualArrival     pgtype.Timestamptz `json:"actual_arrival"`
-	ActualDeparture   pgtype.Timestamptz `json:"actual_departure"`
-	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
-	PrioritySnapshot  *string            `json:"priority_snapshot"`
-	Zp21Sourced       bool               `json:"zp21_sourced"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-	Terminal          *string            `json:"terminal"`
-	LastZp21SeenAt    pgtype.Timestamptz `json:"last_zp21_seen_at"`
+	ID                  int64              `json:"id"`
+	VesselID            int64              `json:"vessel_id"`
+	Berth               *string            `json:"berth"`
+	VesselStatus        string             `json:"vessel_status"`
+	PortCallStatus      string             `json:"port_call_status"`
+	EtaDate             pgtype.Date        `json:"eta_date"`
+	EtaTime             pgtype.Time        `json:"eta_time"`
+	EtdDate             pgtype.Date        `json:"etd_date"`
+	EtdTime             pgtype.Time        `json:"etd_time"`
+	ActualArrival       pgtype.Timestamptz `json:"actual_arrival"`
+	ActualDeparture     pgtype.Timestamptz `json:"actual_departure"`
+	RiskLevelSnapshot   *string            `json:"risk_level_snapshot"`
+	PrioritySnapshot    *string            `json:"priority_snapshot"`
+	Zp21Sourced         bool               `json:"zp21_sourced"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	Terminal            *string            `json:"terminal"`
+	LastZp21SeenAt      pgtype.Timestamptz `json:"last_zp21_seen_at"`
+	ReportMonthOverride pgtype.Date        `json:"report_month_override"`
 }
 
 type ScraperRun struct {

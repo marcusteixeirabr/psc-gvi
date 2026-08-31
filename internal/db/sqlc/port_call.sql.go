@@ -29,18 +29,21 @@ func (q *Queries) AbortStaleZP21PortCalls(ctx context.Context, lastZp21SeenAt pg
 
 const cancelBerthing = `-- name: CancelBerthing :exec
 UPDATE port_calls
-SET actual_arrival      = NULL,
-    actual_departure    = NULL,
-    vessel_status       = 'navigating',
-    port_call_status    = 'planned',
-    risk_level_snapshot = NULL,
-    priority_snapshot   = NULL,
-    updated_at          = NOW()
+SET actual_arrival         = NULL,
+    actual_departure       = NULL,
+    vessel_status          = 'navigating',
+    port_call_status       = 'planned',
+    risk_level_snapshot    = NULL,
+    priority_snapshot      = NULL,
+    report_month_override  = NULL,
+    updated_at             = NOW()
 WHERE id = $1
 `
 
 // Cancela a atracação: limpa actual_arrival, actual_departure e snapshots.
 // Alerta: também apaga dados de suspensão — o front-end deve avisar o usuário.
+// report_month_override também é limpo: sem actual_departure, o override (que
+// se baseia no mês da desatracação) fica órfão/sem sentido. Ver regras.md §13.
 func (q *Queries) CancelBerthing(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, cancelBerthing, id)
 	return err
@@ -48,15 +51,17 @@ func (q *Queries) CancelBerthing(ctx context.Context, id int64) error {
 
 const cancelSuspension = `-- name: CancelSuspension :exec
 UPDATE port_calls
-SET actual_departure    = NULL,
-    port_call_status    = 'active',
-    risk_level_snapshot = NULL,
-    priority_snapshot   = NULL,
-    updated_at          = NOW()
+SET actual_departure       = NULL,
+    port_call_status       = 'active',
+    risk_level_snapshot    = NULL,
+    priority_snapshot      = NULL,
+    report_month_override  = NULL,
+    updated_at             = NOW()
 WHERE id = $1
 `
 
 // Cancela a suspensão: limpa actual_departure e reverte escala para ativa.
+// report_month_override também é limpo (ver comentário em CancelBerthing).
 func (q *Queries) CancelSuspension(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, cancelSuspension, id)
 	return err
@@ -96,14 +101,16 @@ func (q *Queries) CountEscalas(ctx context.Context, arg CountEscalasParams) (int
 
 const countReportKPI = `-- name: CountReportKPI :one
 WITH period_calls AS (
+    -- Bucketiza por report_month_override quando definido (ver regras.md §13),
+    -- senão pelo mês real de actual_arrival.
     SELECT pc.id, pc.vessel_id, pc.priority_snapshot,
            ROW_NUMBER() OVER (PARTITION BY pc.vessel_id ORDER BY pc.actual_arrival DESC) AS rn
     FROM port_calls pc
     JOIN vessels v ON v.id = pc.vessel_id
     WHERE v.acompanhado = TRUE
       AND pc.actual_arrival IS NOT NULL
-      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
-      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
+      AND EXTRACT(YEAR  FROM COALESCE(pc.report_month_override, pc.actual_arrival::date)) = $1::int
+      AND EXTRACT(MONTH FROM COALESCE(pc.report_month_override, pc.actual_arrival::date)) = $2::int
 ),
 vessel_agg AS (
     SELECT
@@ -180,7 +187,7 @@ INSERT INTO port_calls (
     eta_date, eta_time, etd_date, etd_time, zp21_sourced
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9
-) RETURNING id, vessel_id, berth, vessel_status, port_call_status, eta_date, eta_time, etd_date, etd_time, actual_arrival, actual_departure, risk_level_snapshot, priority_snapshot, zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at
+) RETURNING id, vessel_id, berth, vessel_status, port_call_status, eta_date, eta_time, etd_date, etd_time, actual_arrival, actual_departure, risk_level_snapshot, priority_snapshot, zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at, report_month_override
 `
 
 type CreatePortCallParams struct {
@@ -229,6 +236,7 @@ func (q *Queries) CreatePortCall(ctx context.Context, arg CreatePortCallParams) 
 		&i.UpdatedAt,
 		&i.Terminal,
 		&i.LastZp21SeenAt,
+		&i.ReportMonthOverride,
 	)
 	return i, err
 }
@@ -256,11 +264,32 @@ ORDER BY created_at DESC
 LIMIT 1
 `
 
+type GetActivePortCallByVesselRow struct {
+	ID                int64              `json:"id"`
+	VesselID          int64              `json:"vessel_id"`
+	Berth             *string            `json:"berth"`
+	VesselStatus      string             `json:"vessel_status"`
+	PortCallStatus    string             `json:"port_call_status"`
+	EtaDate           pgtype.Date        `json:"eta_date"`
+	EtaTime           pgtype.Time        `json:"eta_time"`
+	EtdDate           pgtype.Date        `json:"etd_date"`
+	EtdTime           pgtype.Time        `json:"etd_time"`
+	ActualArrival     pgtype.Timestamptz `json:"actual_arrival"`
+	ActualDeparture   pgtype.Timestamptz `json:"actual_departure"`
+	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
+	PrioritySnapshot  *string            `json:"priority_snapshot"`
+	Zp21Sourced       bool               `json:"zp21_sourced"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	Terminal          *string            `json:"terminal"`
+	LastZp21SeenAt    pgtype.Timestamptz `json:"last_zp21_seen_at"`
+}
+
 // Retorna o port call mais recente com status planned ou active para um vessel.
 // Usado pelo scraper para decidir se deve criar ou atualizar.
-func (q *Queries) GetActivePortCallByVessel(ctx context.Context, vesselID int64) (PortCall, error) {
+func (q *Queries) GetActivePortCallByVessel(ctx context.Context, vesselID int64) (GetActivePortCallByVesselRow, error) {
 	row := q.db.QueryRow(ctx, getActivePortCallByVessel, vesselID)
-	var i PortCall
+	var i GetActivePortCallByVesselRow
 	err := row.Scan(
 		&i.ID,
 		&i.VesselID,
@@ -371,7 +400,8 @@ SELECT id, vessel_id, berth, vessel_status, port_call_status,
        eta_date, eta_time, etd_date, etd_time,
        actual_arrival, actual_departure,
        risk_level_snapshot, priority_snapshot,
-       zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at
+       zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at,
+       report_month_override
 FROM port_calls WHERE id = $1
 `
 
@@ -397,6 +427,7 @@ func (q *Queries) GetPortCallByID(ctx context.Context, id int64) (PortCall, erro
 		&i.UpdatedAt,
 		&i.Terminal,
 		&i.LastZp21SeenAt,
+		&i.ReportMonthOverride,
 	)
 	return i, err
 }
@@ -1031,14 +1062,17 @@ func (q *Queries) ListEscalasPaged(ctx context.Context, arg ListEscalasPagedPara
 const listReportEntries = `-- name: ListReportEntries :many
 WITH period_vessels AS (
     -- Apenas escalas com atracação registrada — planejadas ficam de fora.
+    -- Bucketiza por report_month_override quando definido (escala de fronteira
+    -- marcada manualmente para contar no mês da desatracação — ver regras.md
+    -- §13), senão pelo mês real de actual_arrival.
     SELECT pc.id, pc.vessel_id,
            pc.actual_arrival::date AS arrival_date
     FROM port_calls pc
     JOIN vessels v ON v.id = pc.vessel_id
     WHERE v.acompanhado = TRUE
       AND pc.actual_arrival IS NOT NULL
-      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = $1::int
-      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = $2::int
+      AND EXTRACT(YEAR  FROM COALESCE(pc.report_month_override, pc.actual_arrival::date)) = $1::int
+      AND EXTRACT(MONTH FROM COALESCE(pc.report_month_override, pc.actual_arrival::date)) = $2::int
 ),
 vessel_first_arrival AS (
     SELECT vessel_id, MIN(arrival_date) AS first_arrival
@@ -1060,6 +1094,7 @@ ranked AS (
         pc.eta_date, pc.etd_date,
         pc.actual_arrival, pc.actual_departure,
         pc.port_call_status, pc.risk_level_snapshot, pc.priority_snapshot,
+        (pc.report_month_override IS NOT NULL)::bool AS month_overridden,
         v.name AS vessel_name, v.imo AS vessel_imo, v.flag AS vessel_flag,
         v.afretado AS vessel_afretado, v.year_built AS vessel_year_built,
         v.vessel_type AS vessel_type,
@@ -1076,7 +1111,7 @@ ranked AS (
 )
 SELECT r.id, r.vessel_id, r.terminal, r.eta_date, r.etd_date,
        r.actual_arrival, r.actual_departure, r.port_call_status,
-       r.risk_level_snapshot, r.priority_snapshot,
+       r.risk_level_snapshot, r.priority_snapshot, r.month_overridden,
        r.vessel_name, r.vessel_imo, r.vessel_flag, r.vessel_afretado,
        r.vessel_year_built, r.vessel_type,
        vi.inspection_id, vi.inspection_result, vi.inspection_date
@@ -1108,6 +1143,7 @@ type ListReportEntriesRow struct {
 	PortCallStatus    string             `json:"port_call_status"`
 	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
 	PrioritySnapshot  *string            `json:"priority_snapshot"`
+	MonthOverridden   bool               `json:"month_overridden"`
 	VesselName        string             `json:"vessel_name"`
 	VesselImo         *string            `json:"vessel_imo"`
 	VesselFlag        *string            `json:"vessel_flag"`
@@ -1148,6 +1184,7 @@ func (q *Queries) ListReportEntries(ctx context.Context, arg ListReportEntriesPa
 			&i.PortCallStatus,
 			&i.RiskLevelSnapshot,
 			&i.PrioritySnapshot,
+			&i.MonthOverridden,
 			&i.VesselName,
 			&i.VesselImo,
 			&i.VesselFlag,
@@ -1370,37 +1407,40 @@ func (q *Queries) UpdatePortCallETD(ctx context.Context, arg UpdatePortCallETDPa
 
 const updatePortCallFull = `-- name: UpdatePortCallFull :exec
 UPDATE port_calls
-SET terminal            = $2,
-    eta_date            = $3,
-    eta_time            = $4,
-    etd_date            = $5,
-    etd_time            = $6,
-    actual_arrival      = $7,
-    actual_departure    = $8,
-    port_call_status    = $9,
-    risk_level_snapshot = $10,
-    priority_snapshot   = $11,
-    vessel_status       = CASE WHEN $7::timestamptz IS NOT NULL THEN 'berthed' ELSE 'navigating' END,
-    updated_at          = NOW()
+SET terminal              = $2,
+    eta_date              = $3,
+    eta_time              = $4,
+    etd_date              = $5,
+    etd_time              = $6,
+    actual_arrival        = $7,
+    actual_departure      = $8,
+    port_call_status      = $9,
+    risk_level_snapshot   = $10,
+    priority_snapshot     = $11,
+    report_month_override = $12,
+    vessel_status         = CASE WHEN $7::timestamptz IS NOT NULL THEN 'berthed' ELSE 'navigating' END,
+    updated_at            = NOW()
 WHERE id = $1
 `
 
 type UpdatePortCallFullParams struct {
-	ID                int64              `json:"id"`
-	Terminal          *string            `json:"terminal"`
-	EtaDate           pgtype.Date        `json:"eta_date"`
-	EtaTime           pgtype.Time        `json:"eta_time"`
-	EtdDate           pgtype.Date        `json:"etd_date"`
-	EtdTime           pgtype.Time        `json:"etd_time"`
-	ActualArrival     pgtype.Timestamptz `json:"actual_arrival"`
-	ActualDeparture   pgtype.Timestamptz `json:"actual_departure"`
-	PortCallStatus    string             `json:"port_call_status"`
-	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
-	PrioritySnapshot  *string            `json:"priority_snapshot"`
+	ID                  int64              `json:"id"`
+	Terminal            *string            `json:"terminal"`
+	EtaDate             pgtype.Date        `json:"eta_date"`
+	EtaTime             pgtype.Time        `json:"eta_time"`
+	EtdDate             pgtype.Date        `json:"etd_date"`
+	EtdTime             pgtype.Time        `json:"etd_time"`
+	ActualArrival       pgtype.Timestamptz `json:"actual_arrival"`
+	ActualDeparture     pgtype.Timestamptz `json:"actual_departure"`
+	PortCallStatus      string             `json:"port_call_status"`
+	RiskLevelSnapshot   *string            `json:"risk_level_snapshot"`
+	PrioritySnapshot    *string            `json:"priority_snapshot"`
+	ReportMonthOverride pgtype.Date        `json:"report_month_override"`
 }
 
 // Edição completa de uma escala pelo usuário.
 // vessel_status é derivado automaticamente: actual_arrival preenchido → berthed, senão navigating.
+// report_month_override: ver regras.md §13 — NULL = usa actual_arrival (padrão).
 func (q *Queries) UpdatePortCallFull(ctx context.Context, arg UpdatePortCallFullParams) error {
 	_, err := q.db.Exec(ctx, updatePortCallFull,
 		arg.ID,
@@ -1414,6 +1454,7 @@ func (q *Queries) UpdatePortCallFull(ctx context.Context, arg UpdatePortCallFull
 		arg.PortCallStatus,
 		arg.RiskLevelSnapshot,
 		arg.PrioritySnapshot,
+		arg.ReportMonthOverride,
 	)
 	return err
 }

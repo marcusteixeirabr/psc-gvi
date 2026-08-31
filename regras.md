@@ -367,3 +367,22 @@ Aplicada sobre TODAS as escalas do navio no mês, não só a mais recente:
 **Implementado** em `CountReportKPI` (`internal/db/query/port_call.sql`): a CTE `period_calls` ganhou `ROW_NUMBER() OVER (PARTITION BY vessel_id ORDER BY actual_arrival DESC) AS rn`, e `any_in_window` (`BOOL_OR` sobre todas as escalas) virou `latest_in_window` (`BOOL_OR` só quando `rn = 1`). `any_inspected` não mudou — continua agregando TODAS as escalas do mês, preservando o "vence" para inspeção nossa.
 
 `ListReportEntries` não precisou mudar — já exibe direto os campos (`risco`/`prioridade`) da escala mais recente do navio no mês; o problema estava só na agregação do KPI.
+
+---
+
+## 13. Override manual de mês para escalas de fronteira
+
+**Contexto:** com a correção de timezone (§11), o relatório mensal bucketiza cada escala pelo mês real de `actual_arrival` (fuso de SP). Isso expôs um caso de fronteira: a **ANNEGRET** atracou em 31/07/2026 e foi inspecionada em 04/08/2026 — corretamente cai no relatório de **julho** pelo `actual_arrival`, mas a inspeção (o que importa para o KPI) aconteceu em **agosto**. Marcus quer decidir, caso a caso, se uma escala assim conta no mês da atracação (padrão) ou no mês da desatracação — **sem editar as datas reais da escala**, e só para escalas que **efetivamente atracaram e desatracaram** (não para `planned`).
+
+**Por que é manual, não uma regra automática:** a decisão depende do caso — ex.: onde a inspeção realmente aconteceu — não é derivável só das datas. Marcus foi explícito: "podemos considerá-los como escala do mês anterior ou do mês posterior" (a regra correta varia).
+
+**Implementação:**
+- Campo novo `port_calls.report_month_override DATE` (nullable, migração `022_port_call_report_month_override.sql`). `NULL` = comportamento padrão (usa `actual_arrival`). Quando definido, guarda o primeiro dia do mês desejado.
+- Editável só no formulário completo de edição da escala (`escala_form.html`, `/escalas/:id/edit`) — um checkbox "Considerar esta escala no mês da desatracação", visível **só** quando a escala já tem `actual_arrival` **e** `actual_departure` preenchidos. Ao marcar, `EditSave` (`internal/portcall/escala_handler.go`) grava o primeiro dia do mês de `actual_departure` (fuso SP) via `monthOverrideFromDeparture`; ao desmarcar, grava `NULL`.
+- `ListReportEntries` e `CountReportKPI` (`internal/db/query/port_call.sql`) bucketizam por `COALESCE(pc.report_month_override, pc.actual_arrival::date)` em vez de só `pc.actual_arrival::date`. A data **exibida** na coluna "Atracação" continua sendo a real — só o mês em que a escala aparece no relatório/KPI muda.
+- `ListReportEntries` expõe `month_overridden` (bool) para exibir um indicador (🔧, com tooltip) na linha do relatório quando o mês foi ajustado manualmente — transparência para auditoria futura.
+- `CancelBerthing`/`CancelSuspension` limpam `report_month_override` — sem `actual_departure`, um override baseado no mês da desatracação fica órfão/sem sentido.
+
+**Por que não na página Escalas:** `ListEscalas`/`CountEscalas` já bucketizam por `COALESCE(actual_departure, actual_arrival, eta_date)` (departure tem prioridade) — uma escala de fronteira como a ANNEGRET já aparece no mês da desatracação nessa página, sem precisar do override. O problema era só no relatório/KPI, que usa unicamente `actual_arrival`.
+
+**Estado da implementação:** ✅ Implementado (2026-08-31).

@@ -306,19 +306,21 @@ func (h *EscalaHandler) EditSave(c *gin.Context) {
 	}
 	riskSnap := nullableStr(c.PostForm("risk_level_snapshot"))
 	prioSnap := nullableStr(c.PostForm("priority_snapshot"))
+	monthOverride := monthOverrideFromDeparture(c.PostForm("report_month_override") != "", departTS)
 
 	if err := h.q.UpdatePortCallFull(c.Request.Context(), sqlc.UpdatePortCallFullParams{
-		ID:                id,
-		Terminal:          terminal,
-		EtaDate:           etaDate,
-		EtaTime:           etaTime,
-		EtdDate:           etdDate,
-		EtdTime:           etdTime,
-		ActualArrival:     arrivalTS,
-		ActualDeparture:   departTS,
-		PortCallStatus:    status,
-		RiskLevelSnapshot: riskSnap,
-		PrioritySnapshot:  prioSnap,
+		ID:                  id,
+		Terminal:            terminal,
+		EtaDate:             etaDate,
+		EtaTime:             etaTime,
+		EtdDate:             etdDate,
+		EtdTime:             etdTime,
+		ActualArrival:       arrivalTS,
+		ActualDeparture:     departTS,
+		PortCallStatus:      status,
+		RiskLevelSnapshot:   riskSnap,
+		PrioritySnapshot:    prioSnap,
+		ReportMonthOverride: monthOverride,
 	}); err != nil {
 		c.Redirect(http.StatusFound, fmt.Sprintf("/escalas/%d/edit?error=%s",
 			id, url.QueryEscape("Erro ao salvar: "+err.Error())))
@@ -592,6 +594,22 @@ func parseTsOptional(s string) pgtype.Timestamptz {
 		return ts
 	}
 	return t
+}
+
+// monthOverrideFromDeparture calcula o report_month_override (ver regras.md §13)
+// a partir do checkbox de edição da escala: se marcado e a escala tem
+// actual_departure, retorna o primeiro dia do mês da desatracação (fuso SP);
+// senão retorna um pgtype.Date inválido (NULL — comportamento padrão).
+func monthOverrideFromDeparture(checked bool, departTS pgtype.Timestamptz) pgtype.Date {
+	var d pgtype.Date
+	if !checked || !departTS.Valid {
+		return d
+	}
+	loc, _ := time.LoadLocation("America/Sao_Paulo")
+	t := departTS.Time.In(loc)
+	firstOfMonth := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, loc)
+	_ = d.Scan(firstOfMonth)
+	return d
 }
 
 func parseDateToTimestamptz(s string) (pgtype.Timestamptz, error) {

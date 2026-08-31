@@ -260,25 +260,28 @@ SELECT id, vessel_id, berth, vessel_status, port_call_status,
        eta_date, eta_time, etd_date, etd_time,
        actual_arrival, actual_departure,
        risk_level_snapshot, priority_snapshot,
-       zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at
+       zp21_sourced, created_at, updated_at, terminal, last_zp21_seen_at,
+       report_month_override
 FROM port_calls WHERE id = $1;
 
 -- name: UpdatePortCallFull :exec
 -- Edição completa de uma escala pelo usuário.
 -- vessel_status é derivado automaticamente: actual_arrival preenchido → berthed, senão navigating.
+-- report_month_override: ver regras.md §13 — NULL = usa actual_arrival (padrão).
 UPDATE port_calls
-SET terminal            = $2,
-    eta_date            = $3,
-    eta_time            = $4,
-    etd_date            = $5,
-    etd_time            = $6,
-    actual_arrival      = $7,
-    actual_departure    = $8,
-    port_call_status    = $9,
-    risk_level_snapshot = $10,
-    priority_snapshot   = $11,
-    vessel_status       = CASE WHEN $7::timestamptz IS NOT NULL THEN 'berthed' ELSE 'navigating' END,
-    updated_at          = NOW()
+SET terminal              = $2,
+    eta_date              = $3,
+    eta_time              = $4,
+    etd_date              = $5,
+    etd_time              = $6,
+    actual_arrival        = $7,
+    actual_departure      = $8,
+    port_call_status      = $9,
+    risk_level_snapshot   = $10,
+    priority_snapshot     = $11,
+    report_month_override = $12,
+    vessel_status         = CASE WHEN $7::timestamptz IS NOT NULL THEN 'berthed' ELSE 'navigating' END,
+    updated_at            = NOW()
 WHERE id = $1;
 
 -- name: DeletePortCall :exec
@@ -325,24 +328,29 @@ WHERE id = $1;
 -- name: CancelBerthing :exec
 -- Cancela a atracação: limpa actual_arrival, actual_departure e snapshots.
 -- Alerta: também apaga dados de suspensão — o front-end deve avisar o usuário.
+-- report_month_override também é limpo: sem actual_departure, o override (que
+-- se baseia no mês da desatracação) fica órfão/sem sentido. Ver regras.md §13.
 UPDATE port_calls
-SET actual_arrival      = NULL,
-    actual_departure    = NULL,
-    vessel_status       = 'navigating',
-    port_call_status    = 'planned',
-    risk_level_snapshot = NULL,
-    priority_snapshot   = NULL,
-    updated_at          = NOW()
+SET actual_arrival         = NULL,
+    actual_departure       = NULL,
+    vessel_status          = 'navigating',
+    port_call_status       = 'planned',
+    risk_level_snapshot    = NULL,
+    priority_snapshot      = NULL,
+    report_month_override  = NULL,
+    updated_at             = NOW()
 WHERE id = $1;
 
 -- name: CancelSuspension :exec
 -- Cancela a suspensão: limpa actual_departure e reverte escala para ativa.
+-- report_month_override também é limpo (ver comentário em CancelBerthing).
 UPDATE port_calls
-SET actual_departure    = NULL,
-    port_call_status    = 'active',
-    risk_level_snapshot = NULL,
-    priority_snapshot   = NULL,
-    updated_at          = NOW()
+SET actual_departure       = NULL,
+    port_call_status       = 'active',
+    risk_level_snapshot    = NULL,
+    priority_snapshot      = NULL,
+    report_month_override  = NULL,
+    updated_at             = NOW()
 WHERE id = $1;
 
 -- name: ListReportEntries :many
@@ -354,14 +362,17 @@ WHERE id = $1;
 -- terminal/ETA/ETD/risco/prioridade) não tenha sido inspecionada. Ver regras.md §10.
 WITH period_vessels AS (
     -- Apenas escalas com atracação registrada — planejadas ficam de fora.
+    -- Bucketiza por report_month_override quando definido (escala de fronteira
+    -- marcada manualmente para contar no mês da desatracação — ver regras.md
+    -- §13), senão pelo mês real de actual_arrival.
     SELECT pc.id, pc.vessel_id,
            pc.actual_arrival::date AS arrival_date
     FROM port_calls pc
     JOIN vessels v ON v.id = pc.vessel_id
     WHERE v.acompanhado = TRUE
       AND pc.actual_arrival IS NOT NULL
-      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = sqlc.arg(year)::int
-      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = sqlc.arg(month)::int
+      AND EXTRACT(YEAR  FROM COALESCE(pc.report_month_override, pc.actual_arrival::date)) = sqlc.arg(year)::int
+      AND EXTRACT(MONTH FROM COALESCE(pc.report_month_override, pc.actual_arrival::date)) = sqlc.arg(month)::int
 ),
 vessel_first_arrival AS (
     SELECT vessel_id, MIN(arrival_date) AS first_arrival
@@ -386,6 +397,7 @@ ranked AS (
         pc.eta_date, pc.etd_date,
         pc.actual_arrival, pc.actual_departure,
         pc.port_call_status, pc.risk_level_snapshot, pc.priority_snapshot,
+        (pc.report_month_override IS NOT NULL)::bool AS month_overridden,
         v.name AS vessel_name, v.imo AS vessel_imo, v.flag AS vessel_flag,
         v.afretado AS vessel_afretado, v.year_built AS vessel_year_built,
         v.vessel_type AS vessel_type,
@@ -402,7 +414,7 @@ ranked AS (
 )
 SELECT r.id, r.vessel_id, r.terminal, r.eta_date, r.etd_date,
        r.actual_arrival, r.actual_departure, r.port_call_status,
-       r.risk_level_snapshot, r.priority_snapshot,
+       r.risk_level_snapshot, r.priority_snapshot, r.month_overridden,
        r.vessel_name, r.vessel_imo, r.vessel_flag, r.vessel_afretado,
        r.vessel_year_built, r.vessel_type,
        vi.inspection_id, vi.inspection_result, vi.inspection_date
@@ -433,14 +445,16 @@ ORDER BY
 -- (ver regras.md §12); uma reconsulta CIALA sem inspeção nossa não deve manter o
 -- navio marcado como sujeito depois que o próprio CIALA já o tirou da janela.
 WITH period_calls AS (
+    -- Bucketiza por report_month_override quando definido (ver regras.md §13),
+    -- senão pelo mês real de actual_arrival.
     SELECT pc.id, pc.vessel_id, pc.priority_snapshot,
            ROW_NUMBER() OVER (PARTITION BY pc.vessel_id ORDER BY pc.actual_arrival DESC) AS rn
     FROM port_calls pc
     JOIN vessels v ON v.id = pc.vessel_id
     WHERE v.acompanhado = TRUE
       AND pc.actual_arrival IS NOT NULL
-      AND EXTRACT(YEAR  FROM pc.actual_arrival::date) = sqlc.arg(year)::int
-      AND EXTRACT(MONTH FROM pc.actual_arrival::date) = sqlc.arg(month)::int
+      AND EXTRACT(YEAR  FROM COALESCE(pc.report_month_override, pc.actual_arrival::date)) = sqlc.arg(year)::int
+      AND EXTRACT(MONTH FROM COALESCE(pc.report_month_override, pc.actual_arrival::date)) = sqlc.arg(month)::int
 ),
 vessel_agg AS (
     SELECT

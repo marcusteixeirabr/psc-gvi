@@ -138,7 +138,9 @@
       {{range $i, $e := .Entries}}
       <tr {{if $e.IsBrazilian}}class="br"{{end}}>
         <td class="dim">{{add1 $i}}</td>
-        <td>{{if $e.BerthingDate}}<strong>{{$e.BerthingDate}}</strong>{{else}}<span class="dim">—</span>{{end}}</td>
+        <td>{{if $e.BerthingDate}}<strong>{{$e.BerthingDate}}</strong>{{else}}<span class="dim">—</span>{{end}}
+          {{if $e.MonthOverridden}}<span class="dim-sm" title="Mês do relatório ajustado manualmente (escala de fronteira) — ver regras.md §13">🔧</span>{{end}}
+        </td>
         <td>
           <a href="/vessels/{{$e.VesselID}}" class="vessel-link">{{$e.VesselName}}</a>
           {{if $e.IsBrazilian}}<span class="dim-sm">(BR)</span>{{end}}

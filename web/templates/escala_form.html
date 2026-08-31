@@ -90,6 +90,18 @@
         </div>
       </div>
 
+      {{if and .PC.ActualArrival.Valid .PC.ActualDeparture.Valid}}
+      <div class="field">
+        <label style="text-transform:none; letter-spacing:normal; font-weight:500;">
+          <input type="checkbox" name="report_month_override" value="1"
+                 {{if .PC.ReportMonthOverride.Valid}}checked{{end}}
+                 style="width:auto; margin-right:0.4rem;">
+          Considerar esta escala no mês da desatracação (relatório/KPI)
+        </label>
+        <p class="hint">Para escalas que atracaram no fim de um mês e desatracaram no início do seguinte — sem alterar as datas reais. Não muda o que é exibido, só em qual mês do relatório/KPI ela conta.</p>
+      </div>
+      {{end}}
+
       <div class="field">
         <label>Status</label>
         <select name="port_call_status">

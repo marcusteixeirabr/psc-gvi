@@ -44,6 +44,7 @@ type ReportEntry struct {
 	InspectionDate   string
 	IsBrazilian      bool
 	IsAfretado       bool
+	MonthOverridden  bool // true se o mês do relatório foi ajustado manualmente (regras.md §13)
 }
 
 // KPI resume os números do mês para os cards do relatório.
@@ -194,6 +195,7 @@ func buildEntry(r dbsqlc.ListReportEntriesRow) ReportEntry {
 		PrioritySnapshot: derefStr(r.PrioritySnapshot),
 		Inspected:        r.InspectionID != nil,
 		InspectionResult: inspResultLabel(derefStr(r.InspectionResult)),
+		MonthOverridden:  r.MonthOverridden,
 	}
 
 	if r.ActualArrival.Valid {

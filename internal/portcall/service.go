@@ -151,6 +151,16 @@ func processGroup(ctx context.Context, q *sqlc.Queries, group []scraper.Manobras
 		if blockedByR8(ctx, q, v.ID, terminalOf(entrada, saida)) {
 			return nil
 		}
+		// R10: se há uma escala 'planned' abortada (R6) do mesmo navio no mesmo
+		// terminal há menos de 2 dias, reverte em vez de criar uma escala nova —
+		// sinal de sumiço transitório de um ciclo do ZP-21, não um cancelamento
+		// real. Ver regras.md §4 R10.
+		reverted, err := revertRecentAbort(ctx, q, v, entrada, saida, result, scrapeTime, refresher)
+		if err != nil {
+			slog.Error("R10: falha ao reverter escala abortada", "component", "portcall", "vessel", v.Name, "error", err)
+		} else if reverted {
+			return nil
+		}
 		// Nenhum port call ativo — cria novo.
 		return createPortCallEntry(ctx, q, v, entrada, saida, result, scrapeTime, refresher)
 	}
@@ -259,6 +269,67 @@ func blockedByR8(ctx context.Context, q *sqlc.Queries, vesselID int64, incomingT
 // e sem acentos — mesmo padrão usado para normalizar a coluna Situação do ZP-21.
 func normalizeTerminal(s string) string {
 	return strings.Join(strings.Fields(scraper.StripAccents(strings.ToLower(s))), "")
+}
+
+// revertRecentAbort verifica se há uma escala 'planned' abortada pela R6 (sumiço
+// transitório de um ciclo do ZP-21) do mesmo navio no mesmo terminal (normalizado)
+// dentro do cooldown de 2 dias — nesse caso reverte a escala existente para
+// 'planned' com os dados novos do ZP-21 em vez de criar uma escala nova, evitando
+// a duplicata. Ver regras.md §4 R10. Retorna true se reverteu.
+func revertRecentAbort(ctx context.Context, q *sqlc.Queries, v sqlc.Vessel, entrada, saida *scraper.ManobrasRow, result *ScrapeResult, scrapeTime time.Time, refresher CIALARefresher) (bool, error) {
+	terminal := normalizeTerminal(terminalOf(entrada, saida))
+	if terminal == "" {
+		return false, nil
+	}
+	var since pgtype.Timestamptz
+	_ = since.Scan(time.Now().Add(-r8CooldownWindow))
+	recent, err := q.GetRecentAbortedByVessel(ctx, sqlc.GetRecentAbortedByVesselParams{
+		VesselID:  v.ID,
+		UpdatedAt: since,
+	})
+	if err != nil {
+		return false, fmt.Errorf("buscando escalas abortadas recentes: %w", err)
+	}
+	var targetID int64
+	found := false
+	for _, rc := range recent {
+		if rc.Terminal != nil && normalizeTerminal(*rc.Terminal) == terminal {
+			targetID = rc.ID
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, nil
+	}
+
+	vesselStatus := "navigating"
+	if entrada == nil && saida != nil {
+		vesselStatus = "berthed"
+	}
+	if err := q.RevertAbortedPortCall(ctx, sqlc.RevertAbortedPortCallParams{
+		ID:           targetID,
+		Terminal:     optStr(terminalOf(entrada, saida)),
+		VesselStatus: vesselStatus,
+		EtaDate:      parsePgDate(strIf(entrada, func(r *scraper.ManobrasRow) string { return r.RawDate })),
+		EtaTime:      parsePgTime(strIf(entrada, func(r *scraper.ManobrasRow) string { return r.RawTime })),
+		EtdDate:      parsePgDate(strIf(saida, func(r *scraper.ManobrasRow) string { return r.RawDate })),
+		EtdTime:      parsePgTime(strIf(saida, func(r *scraper.ManobrasRow) string { return r.RawTime })),
+	}); err != nil {
+		return false, fmt.Errorf("revertendo escala abortada: %w", err)
+	}
+	result.PortCallsUpdated++
+	markZP21Seen(ctx, q, targetID, scrapeTime)
+	slog.Info("R10: cancelamento revertido (sumiço transitório do ZP-21)", "component", "portcall", "vessel", v.Name, "port_call_id", targetID)
+
+	if vesselStatus == "berthed" {
+		if err := autoRegisterBerthing(ctx, q, targetID, time.Now(), v, refresher); err != nil {
+			slog.Error("R10: auto-atracação falhou após reversão", "component", "portcall", "vessel", v.Name, "error", err)
+		} else {
+			slog.Info("R10: auto-atracação registrada após reversão (data corrente)", "component", "portcall", "vessel", v.Name)
+		}
+	}
+	return true, nil
 }
 
 // createPortCallEntry cria um novo port call para o vessel com os dados ZP-21.

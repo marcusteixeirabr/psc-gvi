@@ -207,6 +207,22 @@ Regra fundamental: o ZP-21 nunca sobrescreve dados já consolidados.
 
 ---
 
+### R10 — Reversão de cancelamento (R6) por sumiço transitório do ZP-21
+
+**Situação:** uma escala `planned` foi cancelada pela R6 (`port_call_status → 'aborted'`) porque não apareceu em UM ciclo de scraping do ZP-21. Dentro dos **2 dias seguintes**, o ZP-21 volta a mostrar o **mesmo navio** no **mesmo terminal** (normalizado).
+
+**Interpretação:** o sumiço foi transitório — falha do site, ciclo perdido — não um cancelamento real. Sem R10, isso caía no fluxo normal de R1 (nenhuma escala `planned`/`active` encontrada) e criava uma escala **nova**, deixando a `aborted` órfã no banco: duas linhas para a mesma visita real (visível como pares de escalas ~27h de diferença, mesma prioridade, no relatório).
+
+**Comparação de terminal:** normalizada, mesmo padrão de R8 (`normalizeTerminal`).
+
+**Ação:** reverte a escala abortada de volta para `port_call_status = 'planned'`, atualizando terminal/ETA/ETD com os dados novos do ZP-21 — em vez de criar uma escala nova. Segue a mesma lógica de `createPortCallEntry` para `vessel_status`/auto-atracação: se só `saida` está visível, vira `berthed` e roda a R9 (`autoRegisterBerthing`) imediatamente.
+
+**Escopo:** aplica-se apenas à criação **automática** originada do ZP-21 (mesmo escopo de R8) — reaproveita a janela de 2 dias (`r8CooldownWindow`).
+
+**Estado da implementação:** ✅ Implementado (2026-08-31) — `revertRecentAbort` em `internal/portcall/service.go`, consultando `GetRecentAbortedByVessel` e aplicando `RevertAbortedPortCall` (`internal/db/query/port_call.sql`), chamado em `processGroup` antes de `createPortCallEntry`.
+
+---
+
 ## 5. Atualização de Dados (sem mudança de status)
 
 **Situação:** escala `planned` ou `active` continua visível no ZP-21 normalmente.
@@ -307,11 +323,11 @@ Se mesmo com o filtro de LOA ainda houver ambiguidade recorrente, considerar inc
 
 Aplicada sobre TODAS as escalas do navio no mês, não só a mais recente:
 
-1. **Inspecionado** — se qualquer escala do mês resultou em inspeção registrada.
-2. **Não inspecionado na janela** — nenhuma escala foi inspecionada, mas ao menos uma esteve em P1/P2 no snapshot.
-3. **Fora da janela** — todas as escalas do mês foram P3/N/A/N/D.
+1. **Inspecionado** — se qualquer escala do mês resultou em inspeção **registrada por nós** (tabela `inspections`, vinculada a um `port_call_id` nosso).
+2. **Não inspecionado na janela** — nenhuma escala foi inspecionada por nós, mas a escala **mais recente** do mês está em P1/P2 no snapshot.
+3. **Fora da janela** — a escala mais recente do mês está em P3/N/A/N/D (mesmo que uma escala mais antiga do mês tenha estado em P1/P2 sem ter sido inspecionada por nós — ver §12).
 
-**Regra derivada:** uma escala mais antiga do navio no mês que já teve inspeção "vence" sobre uma escala posterior sem inspeção — o navio continua aparecendo como inspecionado no relatório/KPI daquele mês, mesmo que a escala mais recente não tenha sido inspecionada.
+**Regra derivada:** uma escala mais antiga do navio no mês que já teve inspeção **por nós** "vence" sobre uma escala posterior sem inspeção — o navio continua aparecendo como inspecionado no relatório/KPI daquele mês, mesmo que a escala mais recente não tenha sido inspecionada. Isso só vale para inspeção nossa; P1/P2 sem inspeção nossa NÃO "vence" (§12).
 
 ### O que muda entre exibição e status
 
@@ -335,3 +351,19 @@ Aplicada sobre TODAS as escalas do navio no mês, não só a mais recente:
 **Não confundir com §10:** a hierarquia "escala mais antiga do mês com inspeção vence" já era corretamente restrita ao mês antes desta correção — o bug real era sobre **qual mês uma escala pertence** (calculado em UTC), não sobre a regra de precedência em si.
 
 **Implementado** em `internal/config/config.go` (`DSN()`).
+
+---
+
+## 12. P1/P2 só "vence" dentro do mês com inspeção nossa
+
+**Contexto:** depois da correção de timezone (§11), Marcus conferiu o relatório de Agosto/2026 com dados reais e achou dois casos residuais no card "Sujeitos à Inspeção": **MSC SUSANNA** e **ONE AMAZON**. Ambos tiveram uma escala P1 no início de agosto e uma escala mais recente, no mesmo mês, já em P3 — e contavam como "sujeitos" pela regra antiga (`any_in_window`: qualquer escala do mês em P1/P2 conta).
+
+**Causa:** esses navios foram inspecionados em **outro porto** (não pela nossa equipe) — a reconsulta do CIALA (R9) atualizou o risco e a escala mais recente corretamente caiu para P3. A regra antiga tratava isso como se fosse uma inspeção nossa "vencendo" (§10), o que está errado: só uma inspeção **nossa** deve manter o navio como "sujeito"/"inspecionado" depois que uma escala posterior do mesmo mês já caiu para P3. Um P1/P2 que caiu para P3 **sem** inspeção nossa significa que o navio saiu da janela por outro motivo (inspeção alheia, recálculo de risco) — nesse caso vale a escala mais recente.
+
+**Regra (2026-08-31):**
+- P1/P2 **com inspeção nossa** (`inspections.port_call_id` aponta pra uma escala do mês) → essa escala "vence" — o navio conta como sujeito/inspecionado no mês mesmo com escala posterior sem inspeção. (mantido de §10, inalterado)
+- P1/P2 **sem inspeção nossa** → vale a escala **mais recente** do mês (`rn = 1`, `actual_arrival DESC`). Se ela é P3, o navio não conta mais como sujeito naquele mês.
+
+**Implementado** em `CountReportKPI` (`internal/db/query/port_call.sql`): a CTE `period_calls` ganhou `ROW_NUMBER() OVER (PARTITION BY vessel_id ORDER BY actual_arrival DESC) AS rn`, e `any_in_window` (`BOOL_OR` sobre todas as escalas) virou `latest_in_window` (`BOOL_OR` só quando `rn = 1`). `any_inspected` não mudou — continua agregando TODAS as escalas do mês, preservando o "vence" para inspeção nossa.
+
+`ListReportEntries` não precisou mudar — já exibe direto os campos (`risco`/`prioridade`) da escala mais recente do navio no mês; o problema estava só na agregação do KPI.

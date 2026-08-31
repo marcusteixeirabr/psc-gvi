@@ -44,6 +44,33 @@ WHERE vessel_id = $1
   AND actual_departure >= $2
 ORDER BY actual_departure DESC;
 
+-- name: GetRecentAbortedByVessel :many
+-- R10: escalas 'planned' abortadas (R6) do navio, atualizadas dentro da janela.
+-- Usado para reverter o cancelamento em vez de criar uma escala nova quando o
+-- navio reaparece no ZP-21 no mesmo terminal pouco depois — sinal de sumiço
+-- transitório de um ciclo do ZP-21, não um cancelamento real. Ver regras.md §4 R10.
+SELECT id, terminal, updated_at
+FROM port_calls
+WHERE vessel_id = $1
+  AND port_call_status = 'aborted'
+  AND zp21_sourced = TRUE
+  AND updated_at >= $2
+ORDER BY updated_at DESC;
+
+-- name: RevertAbortedPortCall :exec
+-- R10: reverte uma escala abortada (R6) de volta para 'planned', reaproveitando
+-- a linha existente em vez de criar uma nova, com os dados atualizados do ZP-21.
+UPDATE port_calls
+SET port_call_status = 'planned',
+    terminal          = $2,
+    vessel_status     = $3,
+    eta_date          = $4,
+    eta_time          = $5,
+    etd_date          = $6,
+    etd_time          = $7,
+    updated_at        = NOW()
+WHERE id = $1;
+
 -- name: UpdatePortCallZP21Seen :exec
 -- Registra o timestamp do ciclo de scraping em que o port call foi visto.
 -- Chamado para todo port call processado pelo scraper ZP-21.
@@ -394,13 +421,20 @@ ORDER BY
 -- KPI do mês: cada navio conta uma única vez.
 -- total_porto   = navios únicos com atracação no mês
 -- estrangeiros  = estrangeiros não-afretados (únicos)
--- sujeitos      = estrangeiros com QUALQUER escala do mês em P1/P2 OU já inspecionados
--- inspected     = estrangeiros com QUALQUER escala do mês inspecionada
--- Hierarquia de status (regras.md §10): inspecionado > não inspecionado na janela >
--- fora da janela. Por isso a agregação olha TODAS as escalas do navio no mês, não
--- só a mais recente.
+-- sujeitos      = estrangeiros com a escala mais recente do mês em P1/P2 OU já
+--                 inspecionados por nós em alguma escala do mês
+-- inspected     = estrangeiros com QUALQUER escala do mês inspecionada por nós
+-- Hierarquia de status (regras.md §10/§12): inspecionado por nós > não inspecionado
+-- na janela > fora da janela.
+-- Por que "mais recente" e não "qualquer escala" para P1/P2: um P1/P2 que NÃO foi
+-- inspecionado por nós normalmente significa que o navio foi inspecionado em outro
+-- porto (ou o CIALA recalculou o risco) — a escala mais recente do mês já reflete
+-- isso. Só uma inspeção NOSSA "vence" sobre uma escala posterior do mesmo mês
+-- (ver regras.md §12); uma reconsulta CIALA sem inspeção nossa não deve manter o
+-- navio marcado como sujeito depois que o próprio CIALA já o tirou da janela.
 WITH period_calls AS (
-    SELECT pc.id, pc.vessel_id, pc.priority_snapshot
+    SELECT pc.id, pc.vessel_id, pc.priority_snapshot,
+           ROW_NUMBER() OVER (PARTITION BY pc.vessel_id ORDER BY pc.actual_arrival DESC) AS rn
     FROM port_calls pc
     JOIN vessels v ON v.id = pc.vessel_id
     WHERE v.acompanhado = TRUE
@@ -411,7 +445,7 @@ WITH period_calls AS (
 vessel_agg AS (
     SELECT
         pcs.vessel_id,
-        BOOL_OR(pcs.priority_snapshot IN ('P1','P2')) AS any_in_window,
+        BOOL_OR(pcs.rn = 1 AND pcs.priority_snapshot IN ('P1','P2')) AS latest_in_window,
         BOOL_OR(ins.id IS NOT NULL) AS any_inspected
     FROM period_calls pcs
     LEFT JOIN inspections ins ON ins.port_call_id = pcs.id
@@ -426,7 +460,7 @@ SELECT
     COUNT(*) FILTER (
         WHERE v.afretado = FALSE
           AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
-          AND (va.any_in_window OR va.any_inspected)
+          AND (va.latest_in_window OR va.any_inspected)
     ) AS sujeitos,
     COUNT(*) FILTER (
         WHERE v.afretado = FALSE

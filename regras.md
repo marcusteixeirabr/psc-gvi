@@ -321,3 +321,17 @@ Aplicada sobre TODAS as escalas do navio no mês, não só a mais recente:
 **Antes desta correção:** ambas as queries já deduplicavam por navio (1 linha/navio, sem contagem duplicada — commit `13f98bd`), mas escolhiam a inspeção/prioridade só da escala mais recente. Uma inspeção numa escala mais antiga do mês era silenciosamente perdida quando havia escala posterior sem inspeção.
 
 **Implementado** em `ListReportEntries` e `CountReportKPI` (`internal/db/query/port_call.sql`).
+
+---
+
+## 11. Timezone da sessão do banco de dados
+
+**Contexto:** os horários vindos do ZP-21 são no fuso de São Paulo, e a exibição no site também usa São Paulo (`time.Local` fixado em `cmd/server/main.go`). O banco de dados precisa concordar com o mesmo fuso — senão o "dia"/"mês" de uma escala pode divergir entre o que é calculado no SQL e o que é mostrado na tela.
+
+**Bug encontrado (2026-08-31):** o relatório mensal de Agosto/2026 mostrava escalas com atracação em 31/07 (ex.: ANNEGRET, P1, inspecionada) dentro do mês de agosto, inflando os cards "Sujeitos à Inspeção"/"Inspecionados". Causa: a conexão com o Postgres (`internal/config/config.go`, `DSN()`) não definia timezone de sessão, então o servidor usava o padrão (UTC), enquanto a exibição usa SP (UTC-3). Uma atracação registrada entre 21h e 23h59 (horário de SP) já é o dia seguinte em UTC — e todo o bucketing por mês em `internal/db/query/port_call.sql` (`::date`, `EXTRACT(YEAR/MONTH FROM ...)` sobre `actual_arrival`/`actual_departure`) e os filtros de 30 dias (`CURRENT_DATE - INTERVAL '30 days'`) rodam no timezone da sessão — não no de exibição.
+
+**Correção:** `DSN()` agora inclui `options='-c timezone=America/Sao_Paulo'`, forçando toda conexão do pool a iniciar sessão já no fuso de SP. Corrige de uma vez todos os `::date`/`EXTRACT`/`CURRENT_DATE` existentes (relatório mensal, página Escalas, filtro de 30 dias, `vessel.sql`), sem precisar editar cada query individualmente — e evita que uma query futura reintroduza o mesmo bug.
+
+**Não confundir com §10:** a hierarquia "escala mais antiga do mês com inspeção vence" já era corretamente restrita ao mês antes desta correção — o bug real era sobre **qual mês uma escala pertence** (calculado em UTC), não sobre a regra de precedência em si.
+
+**Implementado** em `internal/config/config.go` (`DSN()`).

@@ -54,15 +54,22 @@ type Config struct {
 // DSN retorna a string de conexão no formato que o pgx espera.
 // DSN = Data Source Name — é o "endereço completo" do banco de dados.
 //
-// Formato: "host=X port=X dbname=X user=X password=X sslmode=X"
+// Formato: "host=X port=X dbname=X user=X password=X sslmode=X options=X"
 // Em produção (GCP), usaremos sslmode=require. Em dev, disable.
+//
+// options='-c timezone=America/Sao_Paulo' força o timezone da SESSÃO do
+// Postgres a bater com o timezone de negócio já fixado no Go (time.Local
+// em cmd/server/main.go). Sem isso, ::date/EXTRACT/CURRENT_DATE nas queries
+// rodam no timezone padrão do servidor (UTC) enquanto a exibição usa SP —
+// uma atracação registrada entre 21h-23h59 (horário de SP) já virou o dia
+// seguinte em UTC, o que empurra a escala para o mês errado no relatório.
 func (c Config) DSN() string {
 	sslmode := "disable"
 	if c.Env == "production" {
 		sslmode = "require"
 	}
 	return fmt.Sprintf(
-		"host=%s port=%s dbname=%s user=%s password=%s sslmode=%s",
+		"host=%s port=%s dbname=%s user=%s password=%s sslmode=%s options='-c timezone=America/Sao_Paulo'",
 		c.DBHost, c.DBPort, c.DBName, c.DBUser, c.DBPassword, sslmode,
 	)
 }

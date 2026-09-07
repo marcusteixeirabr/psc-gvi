@@ -41,8 +41,13 @@ func FetchManobras(ctx context.Context, url string) ([]ManobrasRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("criando request ZP-21: %w", err)
 	}
-	// User-Agent real para evitar bloqueio por bot detection.
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	// UA no padrão "curl/X" — o WAF do ZP-21 passou a servir conteúdo de outro site
+	// (cloaking) para qualquer requisição vinda do IP da VPS que pareça navegador ou
+	// que se identifique honestamente como scraper; só o padrão curl/versão é liberado
+	// (ver incidente 2026-09-07: mesmo IP+UA "Mozilla..." e até "psc-gvi-scraper/1.0"
+	// levavam à página falsa; curl/X sempre passou). Headers de navegador (Accept,
+	// Sec-Fetch-*) foram removidos de propósito — destoariam de um UA curl real.
+	req.Header.Set("User-Agent", "curl/8.5.0")
 	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9")
 
 	client := &http.Client{Timeout: 30 * time.Second}

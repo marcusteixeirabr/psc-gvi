@@ -71,6 +71,7 @@ func main() {
 	})
 
 	sched := scheduler.New(queries, cfg.ZP21URL).
+		WithZP21UserAgent(cfg.ZP21UserAgent).
 		WithVesselFinder(cfg.VesselFinderURL).
 		WithCIALA(cfg.CIALAURL, cfg.CIALAUsername, cfg.CIALAPassword).
 		WithAlerter(alerter)

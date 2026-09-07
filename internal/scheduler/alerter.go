@@ -101,14 +101,30 @@ func (a *Alerter) checkZP21Silent(ctx context.Context, q *dbsqlc.Queries) {
 	if !a.canSend(key) {
 		return
 	}
+
+	// Diagnóstico da última execução (título/canonical da página recebida —
+	// ver scraper.FetchManobras) ajuda a diferenciar "site fora do ar" de
+	// "site trocou de estrutura" de "WAF servindo conteúdo de outro domínio"
+	// sem precisar de SSH — ver incidente 2026-09-07 [[project_zp21_waf_cloaking]].
+	diag := "sem diagnóstico disponível — verifique /admin/health"
+	if runs, err := q.GetLatestRunPerScraper(ctx); err == nil {
+		for _, r := range runs {
+			if r.Scraper == "zp21" && r.ErrorMessage != nil && *r.ErrorMessage != "" {
+				diag = *r.ErrorMessage
+			}
+		}
+	}
+
 	subject := "[PSC GVI] Alerta: ZP-21 retornou 0 navios nas últimas 3 execuções"
 	body := fmt.Sprintf(
 		"PSC GVI — Alerta Automático\n\n"+
 			"Situação: as últimas %d execuções do scraper ZP-21 retornaram 0 navios.\n"+
-			"Isso pode indicar que o site mudou de estrutura ou está fora do ar.\n"+
+			"Isso pode indicar que o site mudou de estrutura, está fora do ar, ou que\n"+
+			"um WAF anti-bot está bloqueando a requisição (ver ZP21_USER_AGENT no .env).\n\n"+
+			"Diagnóstico da última execução:\n%s\n\n"+
 			"Horário: %s\n\n"+
 			"Acesse /admin/health e verifique o ZP-21 manualmente.\n",
-		count, time.Now().Format("02/01/2006 15:04:05"),
+		count, diag, time.Now().Format("02/01/2006 15:04:05"),
 	)
 	if err := a.send(subject, body); err != nil {
 		slog.Error("erro ao enviar alerta ZP-21 silencioso", "component", "alerter", "error", err)

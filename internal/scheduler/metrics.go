@@ -18,7 +18,11 @@ type RunResult struct {
 
 // RecordRun persiste o resultado de um ciclo na tabela scraper_runs.
 // Erros de persistência são apenas logados — não interrompem o ciclo.
-func RecordRun(ctx context.Context, q *dbsqlc.Queries, scraperName string, start time.Time, rowsFound, processed, failed int, totalErr error) {
+//
+// note é um diagnóstico opcional gravado em error_message mesmo quando status="success"
+// (ex: título/canonical da página recebida quando o ZP-21 volta 0 navios — ver
+// scraper.FetchManobras). totalErr, quando presente, sempre tem prioridade sobre note.
+func RecordRun(ctx context.Context, q *dbsqlc.Queries, scraperName string, start time.Time, rowsFound, processed, failed int, totalErr error, note string) {
 	finished := time.Now()
 	durationMs := int32(finished.Sub(start).Milliseconds())
 
@@ -33,6 +37,8 @@ func RecordRun(ctx context.Context, q *dbsqlc.Queries, scraperName string, start
 	if totalErr != nil {
 		s := totalErr.Error()
 		errMsg = &s
+	} else if note != "" {
+		errMsg = &note
 	}
 
 	var startedTS, finishedTS pgtype.Timestamptz

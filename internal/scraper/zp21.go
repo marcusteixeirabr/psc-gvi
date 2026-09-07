@@ -30,43 +30,82 @@ type ManobrasRow struct {
 	Situation    string // situação do navio normalizada (ex: "atracado", "fundeado", "navegando")
 }
 
+// defaultUserAgent é o UA usado quando ZP21_USER_AGENT não está configurado no .env.
+// Precisa seguir o padrão "curl/X" — ver comentário abaixo e [[project_zp21_waf_cloaking]].
+const defaultUserAgent = "curl/8.5.0"
+
 // FetchManobras busca e retorna as linhas da tabela "Manobras Previstas" do ZP-21.
 // Retorna slice vazio (sem erro) se a tabela estiver vazia.
-func FetchManobras(ctx context.Context, url string) ([]ManobrasRow, error) {
+//
+// Também retorna uma string de diagnóstico (não-vazia só quando rows vier vazio):
+// título e canonical da página recebida, para detectar rápido se o site mudou de
+// estrutura ou se um WAF está servindo conteúdo de outro domínio (cloaking) — ver
+// incidente 2026-09-07, onde o único jeito de descobrir a causa foi comparar isso
+// manualmente por SSH. Agora fica registrado direto em scraper_runs.error_message.
+func FetchManobras(ctx context.Context, url, userAgent string) ([]ManobrasRow, string, error) {
 	if url == "" {
-		return nil, fmt.Errorf("ZP21_URL não configurada no .env")
+		return nil, "", fmt.Errorf("ZP21_URL não configurada no .env")
+	}
+	if userAgent == "" {
+		userAgent = defaultUserAgent
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("criando request ZP-21: %w", err)
+		return nil, "", fmt.Errorf("criando request ZP-21: %w", err)
 	}
-	// UA no padrão "curl/X" — o WAF do ZP-21 passou a servir conteúdo de outro site
+	// UA configurável (ZP21_USER_AGENT) porque o WAF do ZP-21 pode voltar a mudar de
+	// critério sem aviso — trocar aqui evita depender de um novo deploy de código.
+	// Precisa seguir o padrão "curl/X": o WAF passou a servir conteúdo de outro site
 	// (cloaking) para qualquer requisição vinda do IP da VPS que pareça navegador ou
-	// que se identifique honestamente como scraper; só o padrão curl/versão é liberado
-	// (ver incidente 2026-09-07: mesmo IP+UA "Mozilla..." e até "psc-gvi-scraper/1.0"
-	// levavam à página falsa; curl/X sempre passou). Headers de navegador (Accept,
-	// Sec-Fetch-*) foram removidos de propósito — destoariam de um UA curl real.
-	req.Header.Set("User-Agent", "curl/8.5.0")
+	// que se identifique honestamente como scraper; só curl/versão é liberado (ver
+	// incidente 2026-09-07: mesmo IP+UA "Mozilla..." e até "psc-gvi-scraper/1.0"
+	// levavam à página falsa). Headers de navegador (Accept, Sec-Fetch-*) foram
+	// removidos de propósito — destoariam de um UA curl real.
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("buscando ZP-21: %w", err)
+		return nil, "", fmt.Errorf("buscando ZP-21: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ZP-21 retornou HTTP %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("ZP-21 retornou HTTP %d", resp.StatusCode)
 	}
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("parseando HTML do ZP-21: %w", err)
+		return nil, "", fmt.Errorf("parseando HTML do ZP-21: %w", err)
 	}
 
-	return parseManobrasTable(doc), nil
+	rows := parseManobrasTable(doc)
+	var diag string
+	if len(rows) == 0 {
+		diag = diagnosePage(doc)
+		slog.Warn("0 navios — diagnóstico da página recebida", "component", "zp21", "diag", diag)
+	}
+
+	return rows, diag, nil
+}
+
+// diagnosePage resume título e canonical da página recebida, para diferenciar rápido
+// entre "site mudou de estrutura" e "recebemos a página de outro domínio" (cloaking
+// de WAF anti-bot — ver [[project_zp21_waf_cloaking]]).
+func diagnosePage(doc *goquery.Document) string {
+	title := strings.TrimSpace(doc.Find("title").First().Text())
+	canonical, hasCanonical := doc.Find(`link[rel="canonical"]`).First().Attr("href")
+
+	switch {
+	case title != "" && hasCanonical:
+		return fmt.Sprintf("0 navios — página recebida: título=%q canonical=%q (possível bloqueio/cloaking do site)", title, canonical)
+	case title != "":
+		return fmt.Sprintf("0 navios — página recebida: título=%q", title)
+	default:
+		return "0 navios — página recebida sem <title> identificável"
+	}
 }
 
 // parseManobrasTable extrai as linhas da primeira tabela da página.

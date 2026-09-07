@@ -41,7 +41,7 @@ func (h *Handler) ScrapeZP21(c *gin.Context) {
 		return back + sep + "flash=" + url.QueryEscape(msg)
 	}
 
-	rows, err := scraper.FetchManobras(c.Request.Context(), h.zp21URL)
+	rows, _, err := scraper.FetchManobras(c.Request.Context(), h.zp21URL, "")
 	if err != nil {
 		c.Redirect(http.StatusFound, addFlash("Erro ao buscar ZP-21: "+err.Error()))
 		return

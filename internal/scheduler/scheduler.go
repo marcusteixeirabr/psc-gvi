@@ -21,6 +21,7 @@ type Scheduler struct {
 	cron            *cron.Cron
 	queries         *dbsqlc.Queries
 	zp21URL         string
+	zp21UserAgent   string
 	vesselFinderURL string
 	cialaSession    *cialaSession
 	alerter         *Alerter
@@ -33,6 +34,15 @@ func New(queries *dbsqlc.Queries, zp21URL string) *Scheduler {
 		queries: queries,
 		zp21URL: zp21URL,
 	}
+}
+
+// WithZP21UserAgent configura o User-Agent usado na busca do ZP-21. Vazio = usa o
+// padrão do pacote scraper (ver scraper.defaultUserAgent). Configurável via
+// ZP21_USER_AGENT no .env para mitigar um novo bloqueio do WAF sem precisar de
+// deploy de código — ver [[project_zp21_waf_cloaking]].
+func (s *Scheduler) WithZP21UserAgent(ua string) *Scheduler {
+	s.zp21UserAgent = ua
+	return s
 }
 
 // WithVesselFinder configura a URL do VesselFinder para auto-IMO (Story 7.2).
@@ -94,10 +104,10 @@ func (s *Scheduler) runZP21Cycle() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	rows, fetchErr := scraper.FetchManobras(ctx, s.zp21URL)
+	rows, diag, fetchErr := scraper.FetchManobras(ctx, s.zp21URL, s.zp21UserAgent)
 	if fetchErr != nil {
 		slog.Error("FetchManobras falhou", "component", "scheduler", "error", fetchErr)
-		RecordRun(ctx, s.queries, "zp21", start, 0, 0, 0, fetchErr)
+		RecordRun(ctx, s.queries, "zp21", start, 0, 0, 0, fetchErr, "")
 		return
 	}
 
@@ -116,20 +126,20 @@ func (s *Scheduler) runZP21Cycle() {
 		slog.Error("erro no ciclo", "component", "scheduler", "error", e)
 	}
 
-	RecordRun(ctx, s.queries, "zp21", start, result.RowsFound, result.PortCallsUpdated+result.PortCallsCreated, len(result.Errors), nil)
+	RecordRun(ctx, s.queries, "zp21", start, result.RowsFound, result.PortCallsUpdated+result.PortCallsCreated, len(result.Errors), nil, diag)
 
 	// Auto-IMO: busca IMO para navios novos criados neste ciclo.
 	if s.vesselFinderURL != "" {
 		imoStart := time.Now()
 		imoResult := RunAutoIMO(ctx, s.queries, s.vesselFinderURL)
-		RecordRun(ctx, s.queries, "auto_imo", imoStart, 0, imoResult.Processed, imoResult.Failed, imoResult.Err)
+		RecordRun(ctx, s.queries, "auto_imo", imoStart, 0, imoResult.Processed, imoResult.Failed, imoResult.Err, "")
 	}
 
 	// Auto-CIALA: atualiza risco/inspeção para navios com nova escala.
 	if s.cialaSession != nil {
 		cialaStart := time.Now()
 		cialaResult := RunAutoCIALA(ctx, s.queries, s.cialaSession)
-		RecordRun(ctx, s.queries, "auto_ciala", cialaStart, 0, cialaResult.Processed, cialaResult.Failed, cialaResult.Err)
+		RecordRun(ctx, s.queries, "auto_ciala", cialaStart, 0, cialaResult.Processed, cialaResult.Failed, cialaResult.Err, "")
 	}
 
 	// Alertas: verifica condições de alerta após o ciclo completo.

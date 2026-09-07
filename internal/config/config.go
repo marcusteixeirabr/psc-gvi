@@ -35,6 +35,12 @@ type Config struct {
 	// Configurável porque pode mudar sem aviso prévio.
 	ZP21URL string
 
+	// User-Agent enviado na busca do ZP-21. Padrão (definido em scraper.FetchManobras)
+	// se vazio. Configurável para mitigar rápido um novo bloqueio de WAF sem deploy —
+	// ver incidente 2026-09-07: WAF do ZP-21 passou a bloquear UA de navegador,
+	// só o padrão "curl/X" foi liberado.
+	ZP21UserAgent string
+
 	// URL base do VesselFinder — usado para buscar IMO por nome de navio.
 	VesselFinderURL string
 
@@ -93,6 +99,7 @@ func Load() (Config, error) {
 		DBPassword:    getEnv("DB_PASSWORD", ""),
 		SessionSecret: getEnv("SESSION_SECRET", ""),
 		ZP21URL:          getEnv("ZP21_URL", ""),
+		ZP21UserAgent:    getEnv("ZP21_USER_AGENT", ""),
 		VesselFinderURL:  getEnv("VESSEL_FINDER_URL", "https://www.vesselfinder.com"),
 		CIALAURL:         getEnv("CIALA_URL", "https://ciala.acuerdolatinoamericano.org"),
 		CIALAUsername:    getEnv("CIALA_USERNAME", ""),

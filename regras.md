@@ -8,6 +8,56 @@ Mantido aqui para que Marcus possa verificar e corrigir antes de implementar.
 
 ---
 
+## 0. Glossário e Rotina de Domínio
+
+### Rotina que o sistema automatiza (antes manual, 2-3x/dia)
+
+1. **ZP-21** (praticagem) → tabela "Manobras Previstas" → navios previstos/atracados.
+2. **VesselFinder** → IMO a partir do nome (1x por navio; IMO é imutável). Ver §9.
+3. **CIALA** (Acordo de Viña del Mar) → risco, última inspeção, bandeira, tipo e ano de construção.
+4. **Dashboard** → navios na **janela de inspeção** (P1/P2). O sistema apoia a decisão, não decide.
+
+### Termos
+
+| Termo | Significado |
+|-------|------------|
+| Escala / port call | Uma visita do navio. Os 2 registros do ZP-21 (entrada + saída) viram **um** `port_call` |
+| Janela de inspeção | Prioridade P1 ou P2 (navio elegível para inspeção PSC) |
+| Snapshot | `risk_level_snapshot`/`priority_snapshot` congelados na atracação (base histórica do relatório) |
+| Terminal | Texto livre (`VARCHAR`), não é entidade/FK |
+
+### Risco (`vessels.risk_level`) → Prioridade
+
+| Valor | Origem | Prioridade |
+|-------|--------|-----------|
+| `NULL` | CIALA ainda não consultado | N/D |
+| `not_found` | Navio fora da base do CIALA | N/D |
+| `high` / `standard` / `low` sem data de inspeção | "Sin Inspección previa en AVM" | **P1** |
+| `high` / `standard` / `low` com data | — | Calculada pelos meses desde a última inspeção |
+
+### Classificação de navio (migration 017)
+
+- `afretado` (bool): bandeira estrangeira operada por empresa BR → tratado como nacional.
+- `acompanhado` (bool, default true): `false` = Estado, apoio, rebocador ou desativado → excluído de tudo.
+- Nacional/estrangeiro é **derivado** da bandeira (Brasil/Brazil ou afretado → nacional).
+- Dashboard: só estrangeiros acompanhados. Relatório mensal: estrangeiros + nacionais acompanhados.
+
+### Dashboard e relatório
+
+- Inspetores trabalham 09h–16h em dias úteis. A ordenação é por data (ETA/ETD).
+- Idade do navio importa: navios com mais de 20 anos ganham destaque, mesmo com prioridade baixa (tendem a ser *substandard*).
+- Status simplificado: `berthed` = "Atracado"; qualquer outro = "A caminho".
+- Meta do GVI: inspecionar **≥ 20%** dos navios estrangeiros na janela, por mês calendário (KPI no relatório e no dashboard). Hierarquia por navio no mês: ver §10, §12 e §13.
+
+### CIALA — notas técnicas do scraper (`internal/scraper/ciala.go`)
+
+- Login ASP.NET Identity (`/Identity/Account/Login`). A página tem vários forms: usar o que contém `Input.Email`.
+- Busca server-side: `GET /Arrival/GrillaArribos?buscar={IMO}&userName={email}`.
+- Data de inspeção em `DD/MM/AA`. A coluna de bandeira tem cabeçalho vazio (só ícone `fi-XX`) e é detectada por posição.
+- Tabela vazia → `risk_level = 'not_found'`.
+
+---
+
 ## 1. Ciclo de vida de uma Escala (port_call)
 
 ```

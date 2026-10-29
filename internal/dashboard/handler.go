@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/marcusteixeirabr/psc-gvi/internal/auth"
 	"github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
+	"github.com/marcusteixeirabr/psc-gvi/internal/report"
 	"github.com/marcusteixeirabr/psc-gvi/internal/vessel"
 )
 
@@ -171,10 +172,8 @@ func (h *Handler) Index(c *gin.Context) {
 		Year:  int32(now.Year()),
 		Month: int32(now.Month()),
 	})
-	monthKPI := 0.0
-	if kpiRow.Sujeitos > 0 {
-		monthKPI = float64(kpiRow.Inspected) / float64(kpiRow.Sujeitos) * 100
-	}
+	// Mesma regra de % do relatório (inclui o teto de 100% — regras.md §14).
+	monthKPI := report.KPIPercent(kpiRow.Inspected, kpiRow.Sujeitos)
 	monthColor := "red"
 	if monthKPI >= 20 {
 		monthColor = "green"

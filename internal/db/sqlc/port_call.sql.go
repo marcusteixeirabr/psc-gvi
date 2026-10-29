@@ -116,7 +116,10 @@ vessel_agg AS (
     SELECT
         pcs.vessel_id,
         BOOL_OR(pcs.rn = 1 AND pcs.priority_snapshot IN ('P1','P2')) AS latest_in_window,
-        BOOL_OR(ins.id IS NOT NULL) AS any_inspected
+        BOOL_OR(ins.id IS NOT NULL) AS any_inspected,
+        -- Inspeção nossa numa escala que estava NA janela (P1/P2): só esta
+        -- "vence" e mantém o navio como sujeito (regras.md §10/§12/§14).
+        BOOL_OR(ins.id IS NOT NULL AND pcs.priority_snapshot IN ('P1','P2')) AS inspected_in_window
     FROM period_calls pcs
     LEFT JOIN inspections ins ON ins.port_call_id = pcs.id
     GROUP BY pcs.vessel_id
@@ -130,7 +133,7 @@ SELECT
     COUNT(*) FILTER (
         WHERE v.afretado = FALSE
           AND (v.flag IS NULL OR LOWER(TRIM(v.flag)) NOT IN ('brazil','brasil'))
-          AND (va.latest_in_window OR va.any_inspected)
+          AND (va.latest_in_window OR va.inspected_in_window)
     ) AS sujeitos,
     COUNT(*) FILTER (
         WHERE v.afretado = FALSE
@@ -156,11 +159,17 @@ type CountReportKPIRow struct {
 // KPI do mês: cada navio conta uma única vez.
 // total_porto   = navios únicos com atracação no mês
 // estrangeiros  = estrangeiros não-afretados (únicos)
-// sujeitos      = estrangeiros com a escala mais recente do mês em P1/P2 OU já
+// sujeitos      = estrangeiros com a escala mais recente do mês em P1/P2 OU
 //
-//	inspecionados por nós em alguma escala do mês
+//	inspecionados por nós numa escala do mês que estava em P1/P2
 //
-// inspected     = estrangeiros com QUALQUER escala do mês inspecionada por nós
+// inspected     = estrangeiros com QUALQUER escala do mês inspecionada por nós,
+//
+//	inclusive fora da janela (perícia, clandestinos, denúncia)
+//
+// Inspeção fora da janela (escala em P3/N/A/N/D) conta como inspeção realizada
+// mas NÃO torna o navio "sujeito" — ver regras.md §14. Por isso o percentual
+// (inspected/sujeitos) pode passar de 100%; o handler limita a 100%.
 // Hierarquia de status (regras.md §10/§12): inspecionado por nós > não inspecionado
 // na janela > fora da janela.
 // Por que "mais recente" e não "qualquer escala" para P1/P2: um P1/P2 que NÃO foi
@@ -1083,9 +1092,11 @@ vessel_inspection AS (
         pv.vessel_id,
         ins.id AS inspection_id,
         ins.result AS inspection_result,
-        ins.inspection_date
+        ins.inspection_date,
+        (pc.priority_snapshot IS NULL OR pc.priority_snapshot NOT IN ('P1','P2'))::bool AS inspection_out_of_window
     FROM period_vessels pv
     JOIN inspections ins ON ins.port_call_id = pv.id
+    JOIN port_calls pc ON pc.id = pv.id
     ORDER BY pv.vessel_id, ins.inspection_date DESC, ins.id DESC
 ),
 ranked AS (
@@ -1114,7 +1125,8 @@ SELECT r.id, r.vessel_id, r.terminal, r.eta_date, r.etd_date,
        r.risk_level_snapshot, r.priority_snapshot, r.month_overridden,
        r.vessel_name, r.vessel_imo, r.vessel_flag, r.vessel_afretado,
        r.vessel_year_built, r.vessel_type,
-       vi.inspection_id, vi.inspection_result, vi.inspection_date
+       vi.inspection_id, vi.inspection_result, vi.inspection_date,
+       COALESCE(vi.inspection_out_of_window, FALSE)::bool AS inspection_out_of_window
 FROM ranked r
 LEFT JOIN vessel_inspection vi ON vi.vessel_id = r.vessel_id
 WHERE r.rn = 1
@@ -1133,26 +1145,27 @@ type ListReportEntriesParams struct {
 }
 
 type ListReportEntriesRow struct {
-	ID                int64              `json:"id"`
-	VesselID          int64              `json:"vessel_id"`
-	Terminal          *string            `json:"terminal"`
-	EtaDate           pgtype.Date        `json:"eta_date"`
-	EtdDate           pgtype.Date        `json:"etd_date"`
-	ActualArrival     pgtype.Timestamptz `json:"actual_arrival"`
-	ActualDeparture   pgtype.Timestamptz `json:"actual_departure"`
-	PortCallStatus    string             `json:"port_call_status"`
-	RiskLevelSnapshot *string            `json:"risk_level_snapshot"`
-	PrioritySnapshot  *string            `json:"priority_snapshot"`
-	MonthOverridden   bool               `json:"month_overridden"`
-	VesselName        string             `json:"vessel_name"`
-	VesselImo         *string            `json:"vessel_imo"`
-	VesselFlag        *string            `json:"vessel_flag"`
-	VesselAfretado    bool               `json:"vessel_afretado"`
-	VesselYearBuilt   *int32             `json:"vessel_year_built"`
-	VesselType        *string            `json:"vessel_type"`
-	InspectionID      *int64             `json:"inspection_id"`
-	InspectionResult  *string            `json:"inspection_result"`
-	InspectionDate    pgtype.Date        `json:"inspection_date"`
+	ID                    int64              `json:"id"`
+	VesselID              int64              `json:"vessel_id"`
+	Terminal              *string            `json:"terminal"`
+	EtaDate               pgtype.Date        `json:"eta_date"`
+	EtdDate               pgtype.Date        `json:"etd_date"`
+	ActualArrival         pgtype.Timestamptz `json:"actual_arrival"`
+	ActualDeparture       pgtype.Timestamptz `json:"actual_departure"`
+	PortCallStatus        string             `json:"port_call_status"`
+	RiskLevelSnapshot     *string            `json:"risk_level_snapshot"`
+	PrioritySnapshot      *string            `json:"priority_snapshot"`
+	MonthOverridden       bool               `json:"month_overridden"`
+	VesselName            string             `json:"vessel_name"`
+	VesselImo             *string            `json:"vessel_imo"`
+	VesselFlag            *string            `json:"vessel_flag"`
+	VesselAfretado        bool               `json:"vessel_afretado"`
+	VesselYearBuilt       *int32             `json:"vessel_year_built"`
+	VesselType            *string            `json:"vessel_type"`
+	InspectionID          *int64             `json:"inspection_id"`
+	InspectionResult      *string            `json:"inspection_result"`
+	InspectionDate        pgtype.Date        `json:"inspection_date"`
+	InspectionOutOfWindow bool               `json:"inspection_out_of_window"`
 }
 
 // Uma linha por navio (última escala do período para os dados de exibição).
@@ -1164,6 +1177,8 @@ type ListReportEntriesRow struct {
 // Inspeção do navio no mês: agrega sobre TODAS as escalas do período, não só a
 // mais recente. Se houver mais de uma escala inspecionada no mesmo mês (raro),
 // mostra a inspeção mais recente.
+// inspection_out_of_window: a escala inspecionada NÃO estava em P1/P2 no
+// snapshot (perícia de acidente, clandestinos, denúncia...) — ver regras.md §14.
 func (q *Queries) ListReportEntries(ctx context.Context, arg ListReportEntriesParams) ([]ListReportEntriesRow, error) {
 	rows, err := q.db.Query(ctx, listReportEntries, arg.Year, arg.Month)
 	if err != nil {
@@ -1194,6 +1209,7 @@ func (q *Queries) ListReportEntries(ctx context.Context, arg ListReportEntriesPa
 			&i.InspectionID,
 			&i.InspectionResult,
 			&i.InspectionDate,
+			&i.InspectionOutOfWindow,
 		); err != nil {
 			return nil, err
 		}

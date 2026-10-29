@@ -162,10 +162,15 @@
         </td>
         <td>
           {{if $e.Inspected}}
+            {{range $i, $iv := $e.Inspections}}
+            {{if $i}}<hr style="border:0;border-top:1px dashed #ddd;margin:3px 0">{{end}}
             <span class="insp-ok">✓</span>
-            <span class="dim-sm">{{$e.InspectionResult}}</span>
-            {{if $e.OutOfWindow}}<span class="dim-sm" title="Inspeção fora da janela (perícia, clandestinos, denúncia): conta como inspeção realizada, mas o navio não entra em 'Sujeitos à inspeção'">(fora da janela)</span>{{end}}
-            {{if $e.InspectionDate}}<br><span class="dim-sm">{{$e.InspectionDate}}</span>{{end}}
+            <span class="dim-sm">{{$iv.Result}}</span>
+            {{if $iv.OutOfWindow}}<span class="dim-sm" title="Inspeção fora da janela (perícia, clandestinos, denúncia): conta como inspeção realizada, mas o navio não entra em 'Sujeitos à inspeção'">(fora da janela)</span>{{end}}
+            {{if $iv.Date}}<br><span class="dim-sm">{{$iv.Date}}</span>{{end}}
+            {{end}}
+          {{else if $e.LastInspection}}
+            <span class="dim-sm" title="Última inspeção PSC registrada no CIALA (qualquer porto) no momento da atracação — não é inspeção do GVI">CIALA {{$e.LastInspection}}</span>
           {{else}}<span class="insp-no">—</span>{{end}}
         </td>
       </tr>

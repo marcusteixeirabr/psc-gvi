@@ -423,6 +423,9 @@ func autoRegisterBerthing(ctx context.Context, q *sqlc.Queries, portCallID int64
 		ActualArrival:     ts,
 		RiskLevelSnapshot: riskLevel,
 		PrioritySnapshot:  &priorityStr,
+		// Mesma data usada para calcular a prioridade (já reconsultada pela R9,
+		// se for o caso) — última inspeção PSC conhecida na chegada (regras.md §15).
+		LastInspectionSnapshot: lastInspDate,
 	})
 }
 

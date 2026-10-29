@@ -436,3 +436,21 @@ Aplicada sobre TODAS as escalas do navio no mês, não só a mais recente:
 **Por que não na página Escalas:** `ListEscalas`/`CountEscalas` já bucketizam por `COALESCE(actual_departure, actual_arrival, eta_date)` (departure tem prioridade) — uma escala de fronteira como a ANNEGRET já aparece no mês da desatracação nessa página, sem precisar do override. O problema era só no relatório/KPI, que usa unicamente `actual_arrival`.
 
 **Estado da implementação:** ✅ Implementado (2026-08-31).
+
+---
+
+## 14. Inspeção fora da janela (perícia, clandestinos, denúncia)
+
+**Contexto:** o GVI pode inspecionar um navio que **não** está na janela de inspeção, por exemplo para uma perícia de acidente a bordo, uma ocorrência de clandestinos ou uma denúncia. Casos reais de out/2026: **MSC ALBANY** (perícia de acidente com vítima fatal, esmagamento por contêiner) e **LADY KATERINA** (clandestino a bordo), as duas com escala P3.
+
+**Bug:** a regra de §10/§12 ("inspeção nossa vence") colocava **qualquer** navio inspecionado por nós no denominador "Sujeitos à inspeção", inclusive os que estavam fora da janela. Isso inflava o denominador e reduzia o %.
+
+**Regra (2026-10-29):**
+- A classificação é **automática** pela prioridade no snapshot da escala inspecionada. A escala não estar em P1/P2 (P3, N/A ou N/D) = inspeção fora da janela. Não há campo manual. A prioridade é calculada pelo CIALA independentemente de haver inspeção.
+- Inspeção fora da janela **conta no numerador** ("Inspecionados"), mas o navio **não entra** em "Sujeitos". Só uma inspeção nossa numa escala P1/P2 mantém o navio como sujeito (§10/§12 continuam valendo para esse caso).
+- Como o numerador pode superar o denominador, o % é **limitado a 100%**. Com 0 sujeitos e pelo menos 1 inspeção, o % é 100%; com 0 inspeções, 0%. É uma decisão consciente: o app não é ferramenta de auditoria.
+- Na tabela do relatório, a coluna de inspeção mostra "✓ resultado **(fora da janela)**" + a data. No CSV aparece "Sim (fora da janela)".
+
+**Implementado** em `CountReportKPI` (`inspected_in_window` substitui `any_inspected` no filtro de `sujeitos`) e `ListReportEntries` (`inspection_out_of_window`), em `internal/db/query/port_call.sql`. O % é calculado por `report.KPIPercent`, usado também pelo dashboard. O selo fica em `web/templates/relatorio.html`.
+
+**Efeito em out/2026 (dump de produção):** sujeitos 41 → 39, inspecionados 9, % 22,0% → 23,1%.

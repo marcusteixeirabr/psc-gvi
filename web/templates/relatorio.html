@@ -164,6 +164,7 @@
           {{if $e.Inspected}}
             <span class="insp-ok">✓</span>
             <span class="dim-sm">{{$e.InspectionResult}}</span>
+            {{if $e.OutOfWindow}}<span class="dim-sm" title="Inspeção fora da janela (perícia, clandestinos, denúncia): conta como inspeção realizada, mas o navio não entra em 'Sujeitos à inspeção'">(fora da janela)</span>{{end}}
             {{if $e.InspectionDate}}<br><span class="dim-sm">{{$e.InspectionDate}}</span>{{end}}
           {{else}}<span class="insp-no">—</span>{{end}}
         </td>

@@ -42,6 +42,9 @@ type ReportEntry struct {
 	Inspected        bool
 	InspectionResult string
 	InspectionDate   string
+	// OutOfWindow: a inspeção foi feita numa escala fora da janela (P3/N/A) —
+	// perícia, clandestinos, denúncia. Conta como inspeção, não como sujeito (regras.md §14).
+	OutOfWindow     bool
 	IsBrazilian      bool
 	IsAfretado       bool
 	MonthOverridden  bool // true se o mês do relatório foi ajustado manualmente (regras.md §13)
@@ -53,7 +56,27 @@ type KPI struct {
 	Estrangeiros int64
 	Sujeitos     int64
 	Inspected    int64
-	Percent      float64 // Inspected / Sujeitos * 100
+	Percent      float64 // Inspected / Sujeitos * 100, limitado a 100 (ver KPIPercent)
+}
+
+// KPIPercent calcula o % de inspeção do mês: inspecionados / sujeitos.
+//
+// Por que pode passar de 100%: inspeções FORA da janela (perícia de acidente,
+// clandestinos, denúncia — escala em P3/N/A) contam no numerador como inspeção
+// realizada, mas o navio NÃO entra no denominador "sujeitos" (regras.md §14).
+// Ex.: 1 inspeção fora da janela num mês sem nenhum navio sujeito = 1/0.
+//
+// Decisão do Marcus: o app não é ferramenta de auditoria — nesses casos exibe
+// 100% em vez de um número absurdo ou divisão por zero. Função exportada para
+// o dashboard usar a MESMA regra (equivalente a um método static utilitário em Java).
+func KPIPercent(inspected, sujeitos int64) float64 {
+	if inspected <= 0 {
+		return 0
+	}
+	if sujeitos <= 0 || inspected >= sujeitos {
+		return 100
+	}
+	return float64(inspected) / float64(sujeitos) * 100
 }
 
 // monthOption é um item do seletor de meses.
@@ -97,9 +120,7 @@ func (h *Handler) Show(c *gin.Context) {
 		Estrangeiros: kpiRow.Estrangeiros,
 		Sujeitos:     kpiRow.Sujeitos,
 		Inspected:    kpiRow.Inspected,
-	}
-	if kpi.Sujeitos > 0 {
-		kpi.Percent = float64(kpi.Inspected) / float64(kpi.Sujeitos) * 100
+		Percent:      KPIPercent(kpiRow.Inspected, kpiRow.Sujeitos),
 	}
 
 	entries := make([]ReportEntry, 0, len(rows))
@@ -151,6 +172,9 @@ func (h *Handler) ExportCSV(c *gin.Context) {
 		insp := "Não"
 		if e.Inspected {
 			insp = "Sim"
+			if e.OutOfWindow {
+				insp = "Sim (fora da janela)"
+			}
 		}
 		w.Write([]string{
 			strconv.FormatInt(e.ID, 10),
@@ -195,6 +219,7 @@ func buildEntry(r dbsqlc.ListReportEntriesRow) ReportEntry {
 		PrioritySnapshot: derefStr(r.PrioritySnapshot),
 		Inspected:        r.InspectionID != nil,
 		InspectionResult: inspResultLabel(derefStr(r.InspectionResult)),
+		OutOfWindow:      r.InspectionID != nil && r.InspectionOutOfWindow,
 		MonthOverridden:  r.MonthOverridden,
 	}
 

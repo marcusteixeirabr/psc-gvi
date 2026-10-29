@@ -118,6 +118,8 @@ func (h *Handler) Register(c *gin.Context) {
 			ID:                portCallID,
 			RiskLevelSnapshot: v.RiskLevel,
 			PrioritySnapshot:  &prio,
+			// Pré-inspeção: a inspeção do GVI aparece pela tabela inspections (regras.md §15).
+			LastInspectionSnapshot: v.LastInspectionDate,
 		})
 	}
 

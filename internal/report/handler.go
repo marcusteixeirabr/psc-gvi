@@ -37,17 +37,27 @@ type ReportEntry struct {
 	VesselIMO        string
 	VesselFlag       string
 	BerthingDate     string // atracação efetiva (actual_arrival)
-	RiskSnapshot     string // risco no snapshot da escala
-	PrioritySnapshot string // prioridade no snapshot da escala
-	Inspected        bool
-	InspectionResult string
-	InspectionDate   string
-	// OutOfWindow: a inspeção foi feita numa escala fora da janela (P3/N/A) —
-	// perícia, clandestinos, denúncia. Conta como inspeção, não como sujeito (regras.md §14).
-	OutOfWindow     bool
+	RiskSnapshot     string // risco da escala de maior precedência do mês (regras.md §15)
+	PrioritySnapshot string // prioridade da escala de maior precedência do mês (P1 > P2 > P3)
+	Inspected        bool   // true se o GVI inspecionou o navio no mês
+	// Inspections: inspeções do GVI no mês, em ordem cronológica. Normalmente
+	// uma; pode haver duas (ex.: inspeção P1 + perícia de acidente no retorno).
+	Inspections []InspectionView
+	// LastInspection: última inspeção PSC conhecida (CIALA, qualquer porto) no
+	// snapshot da atracação — exibida só quando o GVI não inspecionou no mês.
+	LastInspection   string
 	IsBrazilian      bool
 	IsAfretado       bool
 	MonthOverridden  bool // true se o mês do relatório foi ajustado manualmente (regras.md §13)
+}
+
+// InspectionView é uma inspeção do GVI pronta para exibir na célula "Inspeção".
+type InspectionView struct {
+	Result string
+	Date   string
+	// OutOfWindow: a escala inspecionada estava fora da janela (P3/N/A) —
+	// perícia, clandestinos, denúncia. Conta como inspeção, não como sujeito (regras.md §14).
+	OutOfWindow bool
 }
 
 // KPI resume os números do mês para os cards do relatório.
@@ -65,6 +75,8 @@ type KPI struct {
 // clandestinos, denúncia — escala em P3/N/A) contam no numerador como inspeção
 // realizada, mas o navio NÃO entra no denominador "sujeitos" (regras.md §14).
 // Ex.: 1 inspeção fora da janela num mês sem nenhum navio sujeito = 1/0.
+// "Inspected" conta INSPEÇÕES, não navios (regras.md §15): um navio P1
+// inspecionado que volta e sofre uma perícia no mesmo mês soma 2.
 //
 // Decisão do Marcus: o app não é ferramenta de auditoria — nesses casos exibe
 // 100% em vez de um número absurdo ou divisão por zero. Função exportada para
@@ -107,6 +119,8 @@ func (h *Handler) Show(c *gin.Context) {
 		return
 	}
 
+	inspByVessel := h.loadInspections(c, year, month)
+
 	kpiRow, err := h.q.CountReportKPI(c.Request.Context(), dbsqlc.CountReportKPIParams{
 		Year:  int32(year),
 		Month: int32(month),
@@ -125,7 +139,7 @@ func (h *Handler) Show(c *gin.Context) {
 
 	entries := make([]ReportEntry, 0, len(rows))
 	for _, r := range rows {
-		entries = append(entries, buildEntry(r))
+		entries = append(entries, buildEntry(r, inspByVessel[r.VesselID]))
 	}
 
 	c.HTML(http.StatusOK, "relatorio.html", gin.H{
@@ -165,21 +179,32 @@ func (h *Handler) ExportCSV(c *gin.Context) {
 	w.Write([]string{
 		"ID", "Navio", "IMO", "Bandeira", "Atracação",
 		"Risco", "Prioridade", "Inspecionado", "Resultado Insp.", "Data Insp.",
+		"Última insp. PSC (CIALA)",
 	})
 
+	inspByVessel := h.loadInspections(c, year, month)
 	for _, r := range rows {
-		e := buildEntry(r)
+		e := buildEntry(r, inspByVessel[r.VesselID])
+		// Uma linha por navio: com 2+ inspeções do GVI no mês, os campos são
+		// unidos com " / " na mesma ordem (cronológica).
 		insp := "Não"
-		if e.Inspected {
-			insp = "Sim"
-			if e.OutOfWindow {
+		var results, dates []string
+		for _, iv := range e.Inspections {
+			results = append(results, iv.Result)
+			dates = append(dates, iv.Date)
+			if insp == "Não" {
+				insp = "Sim"
+			}
+			if iv.OutOfWindow {
 				insp = "Sim (fora da janela)"
 			}
 		}
 		w.Write([]string{
 			strconv.FormatInt(e.ID, 10),
 			e.VesselName, e.VesselIMO, e.VesselFlag, e.BerthingDate,
-			e.RiskSnapshot, e.PrioritySnapshot, insp, e.InspectionResult, e.InspectionDate,
+			e.RiskSnapshot, e.PrioritySnapshot, insp,
+			strings.Join(results, " / "), strings.Join(dates, " / "),
+			e.LastInspection,
 		})
 	}
 	w.Flush()
@@ -206,8 +231,31 @@ func parseMes(mes string) (year, month int, mesSel string) {
 	return
 }
 
-// buildEntry converte uma linha do banco em ReportEntry formatada para exibição.
-func buildEntry(r dbsqlc.ListReportEntriesRow) ReportEntry {
+// loadInspections busca as inspeções do GVI no mês e agrupa por navio
+// (equivalente a um Map<Long, List<InspectionView>> em Java). Erro → mapa vazio:
+// o relatório ainda abre, só sem a coluna de inspeção preenchida.
+func (h *Handler) loadInspections(c *gin.Context, year, month int) map[int64][]InspectionView {
+	out := map[int64][]InspectionView{}
+	rows, err := h.q.ListReportInspections(c.Request.Context(), dbsqlc.ListReportInspectionsParams{
+		Year:  int32(year),
+		Month: int32(month),
+	})
+	if err != nil {
+		return out
+	}
+	for _, r := range rows {
+		iv := InspectionView{Result: inspResultLabel(r.Result), OutOfWindow: r.OutOfWindow}
+		if r.InspectionDate.Valid {
+			iv.Date = r.InspectionDate.Time.Format("02/01/2006")
+		}
+		out[r.VesselID] = append(out[r.VesselID], iv)
+	}
+	return out
+}
+
+// buildEntry converte uma linha do banco (+ inspeções do GVI do navio no mês)
+// em ReportEntry formatada para exibição.
+func buildEntry(r dbsqlc.ListReportEntriesRow, insps []InspectionView) ReportEntry {
 	e := ReportEntry{
 		ID:               r.ID,
 		VesselID:         r.VesselID,
@@ -217,17 +265,18 @@ func buildEntry(r dbsqlc.ListReportEntriesRow) ReportEntry {
 		IsAfretado:       r.VesselAfretado,
 		RiskSnapshot:     riskLabel(derefStr(r.RiskLevelSnapshot)),
 		PrioritySnapshot: derefStr(r.PrioritySnapshot),
-		Inspected:        r.InspectionID != nil,
-		InspectionResult: inspResultLabel(derefStr(r.InspectionResult)),
-		OutOfWindow:      r.InspectionID != nil && r.InspectionOutOfWindow,
+		Inspected:        len(insps) > 0,
+		Inspections:      insps,
 		MonthOverridden:  r.MonthOverridden,
 	}
 
 	if r.ActualArrival.Valid {
 		e.BerthingDate = r.ActualArrival.Time.Format("02/01/2006")
 	}
-	if r.InspectionDate.Valid {
-		e.InspectionDate = r.InspectionDate.Time.Format("02/01/2006")
+	// Última inspeção PSC (CIALA) congelada na atracação: só faz sentido
+	// quando o GVI não inspecionou no mês (senão a célula mostra a nossa).
+	if !e.Inspected && r.LastInspectionSnapshot.Valid {
+		e.LastInspection = r.LastInspectionSnapshot.Time.Format("02/01/2006")
 	}
 
 	flag := strings.ToLower(strings.TrimSpace(e.VesselFlag))

@@ -454,3 +454,37 @@ Aplicada sobre TODAS as escalas do navio no mês, não só a mais recente:
 **Implementado** em `CountReportKPI` (`inspected_in_window` substitui `any_inspected` no filtro de `sujeitos`) e `ListReportEntries` (`inspection_out_of_window`), em `internal/db/query/port_call.sql`. O % é calculado por `report.KPIPercent`, usado também pelo dashboard. O selo fica em `web/templates/relatorio.html`.
 
 **Efeito em out/2026 (dump de produção):** sujeitos 41 → 39, inspecionados 9, % 22,0% → 23,1%.
+
+---
+
+## 15. Relatório — inspeções múltiplas, última inspeção e prioridade exibida
+
+**Decisões do Marcus (2026-10-29):**
+
+### 15.1 "Inspecionados" conta inspeções, não navios
+
+O KPI "Inspecionados" passa a somar as **inspeções do GVI** em estrangeiros no mês. Caso atípico que motivou a mudança: um navio P1 inspecionado pelo GVI volta no mesmo mês e sofre um acidente, o que exige uma segunda inspeção (perícia). Isso conta **2 inspeções sobre 1 navio sujeito**.
+
+Dois navios P1/P2 inspecionados no mesmo mês na prática não acontecem: depois da inspeção o navio cai para P3, e nem os de risco alto voltam à janela antes de cerca de 2 meses. Quando há inspeção sem janela, vale o teto de 100% da §14.
+
+"Sujeitos" continua contando **navios** (regras de §10, §12 e §14 inalteradas). Exemplo: MSC MARIA MARILYN X (out/2026), com P1 inspecionado em 14/10 e retorno P3 em 21/10, continua sendo 1 sujeito.
+
+### 15.2 Célula "Inspeção" do relatório
+
+| Situação no mês | Exibição |
+|---|---|
+| GVI inspecionou | ✓ resultado + data, uma por inspeção, em ordem cronológica, com "(fora da janela)" quando for o caso (§14) |
+| GVI não inspecionou, existe inspeção PSC anterior conhecida | `CIALA dd/mm/aaaa`, em cinza, sem ✓: última inspeção em qualquer porto do Acordo |
+| Nenhuma das duas | — |
+
+A data do CIALA vem de **`port_calls.last_inspection_snapshot`**, congelada na atracação da escala mais recente do mês, junto com `risk_level_snapshot`/`priority_snapshot` (migration 023). Motivo: `vessels.last_inspection_date` guarda só o valor atual, e o relatório é um retrato do mês. Pontos de captura: `RegisterBerthing` (automático/R9 e manual), `UpdatePortCallSnapshot` (inspeção, valor pré-inspeção) e `UpdatePortCallFull` (só preenche se estiver vazio e a data não for posterior à atracação). `CancelBerthing` limpa o campo.
+
+**Backfill (migration 023):** para escalas antigas usa a data atual do CIALA, se não for posterior à atracação. Senão usa a última inspeção do GVI antes da atracação, ou NULL. É uma aproximação, porque não existe histórico do CIALA.
+
+No CSV, várias inspeções ficam unidas por " / ", e há uma coluna nova "Última insp. PSC (CIALA)".
+
+### 15.3 Prioridade/risco exibidos: maior precedência do mês
+
+Com várias escalas no mês, a linha do relatório mostra o risco/prioridade da escala de **maior precedência** (P1 > P2 > P3 > N/A > N/D; em caso de empate, a mais recente), e não mais o da escala mais recente. É só exibição: o cálculo de "Sujeitos" não muda (§12: sem inspeção do GVI, vale a escala mais recente). Os demais campos da linha (terminal, datas) continuam vindo da escala mais recente.
+
+**Implementado** em `internal/db/query/port_call.sql` (`ListReportEntries`, nova `ListReportInspections`, `CountReportKPI`), `internal/report/handler.go` e `web/templates/relatorio.html`.

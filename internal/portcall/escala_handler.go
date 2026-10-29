@@ -132,6 +132,8 @@ func (h *EscalaHandler) NewSave(c *gin.Context) {
 			ActualArrival:     arrivalTS,
 			RiskLevelSnapshot: v.RiskLevel,
 			PrioritySnapshot:  prio,
+			// Última inspeção PSC conhecida na chegada (regras.md §15).
+			LastInspectionSnapshot: v.LastInspectionDate,
 		})
 	}
 
@@ -222,6 +224,8 @@ func (h *EscalaHandler) RegisterBerthing(c *gin.Context) {
 		ActualArrival:     ts,
 		RiskLevelSnapshot: escala.VesselRiskLevel,
 		PrioritySnapshot:  prio,
+		// Última inspeção PSC conhecida na chegada (regras.md §15).
+		LastInspectionSnapshot: escala.VesselLastInspectionDate,
 	}); err != nil {
 		c.Redirect(http.StatusFound, back+"&error="+url.QueryEscape("Erro ao registrar atracação: "+err.Error()))
 		return

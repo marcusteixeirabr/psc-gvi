@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{.Target.Username}} — Usuários — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; }
+    .container { max-width: 720px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.4rem; color: #1a202c; margin-bottom: 0.25rem; }
+    h2 { font-size: 1rem; color: #2d3748; margin-bottom: 0.4rem; }
+    .sub { font-size: 0.82rem; color: #718096; margin-bottom: 1.25rem; }
+
+    .flash { background: #c6f6d5; color: #276749; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
+    .error { background: #fed7d7; color: #c53030; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
+
+    .back { display: inline-block; margin-bottom: 1.25rem; font-size: 0.82rem; color: #4a5568; text-decoration: none; }
+    .back:hover { color: #2d3748; }
+
+    .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1.1rem 1.25rem; margin-bottom: 1rem; }
+    .card p.desc { font-size: 0.8rem; color: #718096; margin-bottom: 0.75rem; }
+    .row { display: flex; gap: 0.6rem; align-items: end; }
+    .row > div { flex: 1; }
+    label { display: block; font-size: 0.72rem; font-weight: 600; color: #4a5568; margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    input, select { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 0.85rem; }
+    button { padding: 0.5rem 0.9rem; background: #2b6cb0; color: white; border: none; border-radius: 5px; font-size: 0.85rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    button:hover { background: #2c5282; }
+    .danger { border: 1px solid #feb2b2; }
+    .danger h2 { color: #c53030; }
+    .danger button { background: #c53030; }
+    .danger button:hover { background: #9b2c2c; }
+    .blocked { font-size: 0.82rem; color: #718096; font-style: italic; }
+    .badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 10px; font-weight: 700; background: #fefcbf; color: #975a16; }
+  </style>
+</head>
+<body>
+  {{template "nav" .}}
+  <div class="container">
+    <a href="/admin/users" class="back">← Usuários</a>
+    <h1>{{.Target.Username}}</h1>
+    <p class="sub">
+      {{.Target.RoleLabel}} · criado em {{.Target.CreatedAt}}
+      {{if .Target.MustChangePassword}} · <span class="badge">senha provisória pendente</span>{{end}}
+      · <a href="/admin/logins?username={{.Target.Username}}" style="color:#2b6cb0;text-decoration:none">ver logins →</a>
+    </p>
+
+    {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+    {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+
+    {{/* ── Nome ── */}}
+    <div class="card">
+      <h2>Nome exibido</h2>
+      <form method="POST" action="/admin/users/{{.Target.ID}}/name" class="row">
+        <div><input name="display_name" value="{{.Target.DisplayName}}" required maxlength="100"></div>
+        <button type="submit">Salvar nome</button>
+      </form>
+    </div>
+
+    {{/* ── Papel ── */}}
+    <div class="card">
+      <h2>Papel</h2>
+      {{if .Target.IsSelf}}
+        <p class="blocked">Você não pode alterar o seu próprio papel. Peça a outro administrador.</p>
+      {{else}}
+        <p class="desc">Administrador: tudo, inclusive esta área. Editor: navios, escalas e inspeções. Leitor: só consulta.</p>
+        <form method="POST" action="/admin/users/{{.Target.ID}}/role" class="row">
+          <div>
+            <select name="role">
+              {{range .Roles}}<option value="{{.Value}}" {{if eq .Value $.Target.Role}}selected{{end}}>{{.Label}}</option>{{end}}
+            </select>
+          </div>
+          <button type="submit">Salvar papel</button>
+        </form>
+      {{end}}
+    </div>
+
+    {{/* ── Reset de senha ── */}}
+    <div class="card">
+      <h2>Resetar senha</h2>
+      {{if .Target.IsSelf}}
+        <p class="blocked">Para a sua própria senha use <a href="/conta/senha" style="color:#2b6cb0">Minha senha</a>.</p>
+      {{else}}
+        <p class="desc">Defina uma senha provisória (mínimo de {{.MinPassLen}} caracteres). As sessões abertas do usuário são encerradas e, no próximo login, ele é obrigado a trocá-la.</p>
+        <form method="POST" action="/admin/users/{{.Target.ID}}/password" class="row" autocomplete="off">
+          <div>
+            <label>Senha provisória</label>
+            <input name="password" type="password" required minlength="{{.MinPassLen}}" autocomplete="new-password">
+          </div>
+          <div>
+            <label>Confirmar</label>
+            <input name="confirm_password" type="password" required minlength="{{.MinPassLen}}" autocomplete="new-password">
+          </div>
+          <button type="submit">Resetar senha</button>
+        </form>
+      {{end}}
+    </div>
+
+    {{/* ── Exclusão ── */}}
+    <div class="card danger">
+      <h2>Excluir usuário</h2>
+      {{if .Target.IsSelf}}
+        <p class="blocked">Você não pode excluir a sua própria conta.</p>
+      {{else}}
+        <p class="desc">Exclusão definitiva, sem desfazer. O histórico de login do usuário continua no log. Para confirmar, digite o login <strong>{{.Target.Username}}</strong>.</p>
+        <form method="POST" action="/admin/users/{{.Target.ID}}/delete" class="row" autocomplete="off">
+          <div><input name="confirm_username" required placeholder="{{.Target.Username}}" autocomplete="off"></div>
+          <button type="submit">Excluir de vez</button>
+        </form>
+      {{end}}
+    </div>
+  </div>
+</body>
+</html>

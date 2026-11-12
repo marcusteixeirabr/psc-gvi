@@ -12,11 +12,16 @@ import (
 const sessionName = "psc-gvi-session"
 
 // Chaves de sessão — constantes evitam erros de digitação ao acessar valores.
+//
+// O cookie guarda só QUEM é o usuário (id) e a VERSÃO da sessão.
+// Nome, papel e "precisa trocar a senha" são relidos do banco a cada request
+// (ver RequireAuth). Antes o papel ficava no cookie: se o admin rebaixasse
+// alguém, a pessoa continuava com o papel antigo até o cookie expirar (8 dias).
+// Analogia Spring: é como recarregar o UserDetails a cada request em vez de
+// confiar nas authorities gravadas no token.
 const (
-	sessionKeyUserID      = "user_id"
-	sessionKeyUsername    = "username"
-	sessionKeyDisplayName = "display_name"
-	sessionKeyRole        = "role"
+	sessionKeyUserID  = "user_id"
+	sessionKeyVersion = "session_version"
 )
 
 // store é o repositório de sessões. É privado — acessado apenas pelas funções abaixo.
@@ -37,30 +42,37 @@ func InitStore(secret string) {
 		MaxAge: 86400 * 8, // 8 dias em segundos
 		// HttpOnly impede que JavaScript acesse o cookie — protege contra XSS.
 		HttpOnly: true,
-		// SameSiteLaxMode protege contra CSRF na maioria dos casos.
+		// SameSiteLaxMode protege contra CSRF na maioria dos casos: o navegador
+		// não envia o cookie em POST vindo de outro site. Todas as ações de
+		// escrita (inclusive as do admin) são POST, então ficam cobertas.
 		SameSite: http.SameSiteLaxMode,
 	}
 }
 
-// UserSession contém os dados do usuário autenticado que ficam na sessão.
-// É a "identidade" carregada do cookie em cada requisição.
+// UserSession contém os dados do usuário autenticado, montados pelo
+// RequireAuth a partir do banco. É o que os handlers recebem via GetUser(c).
 type UserSession struct {
-	ID          int64
-	Username    string
-	DisplayName string
-	Role        string
+	ID                 int64
+	Username           string
+	DisplayName        string
+	Role               string
+	MustChangePassword bool
 }
 
-// saveSession persiste os dados do usuário no cookie de sessão.
-func saveSession(w http.ResponseWriter, r *http.Request, user UserSession) error {
+// saveSession grava no cookie o id do usuário e a versão atual da sessão.
+func saveSession(w http.ResponseWriter, r *http.Request, userID int64, version int32) error {
 	session, err := store.Get(r, sessionName)
 	if err != nil {
-		return err
+		// Cookie antigo/ilegível (ex.: SESSION_SECRET trocado): começa um novo.
+		// store.Get já devolve uma sessão nova nesse caso; só ignoramos o erro.
+		session, _ = store.New(r, sessionName)
 	}
-	session.Values[sessionKeyUserID] = user.ID
-	session.Values[sessionKeyUsername] = user.Username
-	session.Values[sessionKeyDisplayName] = user.DisplayName
-	session.Values[sessionKeyRole] = user.Role
+	// Limpa chaves do formato antigo (username, role...) que ainda existam.
+	for k := range session.Values {
+		delete(session.Values, k)
+	}
+	session.Values[sessionKeyUserID] = userID
+	session.Values[sessionKeyVersion] = version
 	return session.Save(r, w)
 }
 
@@ -69,29 +81,26 @@ func saveSession(w http.ResponseWriter, r *http.Request, user UserSession) error
 func clearSession(w http.ResponseWriter, r *http.Request) error {
 	session, err := store.Get(r, sessionName)
 	if err != nil {
-		return err
+		session, _ = store.New(r, sessionName)
 	}
 	session.Options.MaxAge = -1
 	return session.Save(r, w)
 }
 
-// getSessionUser lê os dados do usuário do cookie de sessão.
-// Retorna nil se não houver sessão válida (usuário não autenticado).
-func getSessionUser(r *http.Request) *UserSession {
+// readSession lê o id do usuário e a versão da sessão do cookie.
+// ok=false se não houver sessão válida.
+//
+// Cookies do formato antigo (sem session_version) são recusados de propósito:
+// depois do deploy todo mundo entra de novo uma vez, já no formato novo.
+func readSession(r *http.Request) (userID int64, version int32, ok bool) {
 	session, err := store.Get(r, sessionName)
 	if err != nil || session.IsNew {
-		return nil
+		return 0, 0, false
 	}
-
-	id, ok := session.Values[sessionKeyUserID].(int64)
-	if !ok {
-		return nil
+	userID, okID := session.Values[sessionKeyUserID].(int64)
+	version, okVer := session.Values[sessionKeyVersion].(int32)
+	if !okID || !okVer {
+		return 0, 0, false
 	}
-
-	return &UserSession{
-		ID:          id,
-		Username:    session.Values[sessionKeyUsername].(string),
-		DisplayName: session.Values[sessionKeyDisplayName].(string),
-		Role:        session.Values[sessionKeyRole].(string),
-	}
+	return userID, version, true
 }

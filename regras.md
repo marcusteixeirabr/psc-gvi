@@ -488,3 +488,45 @@ No CSV, várias inspeções ficam unidas por " / ", e há uma coluna nova "Últi
 Com várias escalas no mês, a linha do relatório mostra o risco/prioridade da escala de **maior precedência** (P1 > P2 > P3 > N/A > N/D; em caso de empate, a mais recente), e não mais o da escala mais recente. É só exibição: o cálculo de "Sujeitos" não muda (§12: sem inspeção do GVI, vale a escala mais recente). Os demais campos da linha (terminal, datas) continuam vindo da escala mais recente.
 
 **Implementado** em `internal/db/query/port_call.sql` (`ListReportEntries`, nova `ListReportInspections`, `CountReportKPI`), `internal/report/handler.go` e `web/templates/relatorio.html`.
+
+---
+
+## 16. Usuários, papéis (RBAC) e log de login
+
+### 16.1 Papéis
+
+| Papel | Pode |
+|---|---|
+| `admin` | Tudo, inclusive a área administrativa (`/admin/users`, `/admin/logins`, `/admin/health`) |
+| `editor` | Navios, escalas, inspeções, scrapers manuais |
+| `reader` | Só consulta (dashboard, navios, escalas, relatório) |
+
+Quem garante o acesso são os grupos de rota em `cmd/server/main.go` (`auth.RequireRole`). Não-admin em rota admin recebe **403**; anônimo é redirecionado para `/login`.
+
+### 16.2 Área administrativa (só admin)
+
+Em `/admin/users`, sobre **outros** usuários: criar, alterar o nome exibido, alterar o papel, resetar a senha, excluir.
+
+- **Criar e resetar** usam senha **provisória** digitada pelo admin (mínimo de 8 caracteres). `users.must_change_password = true`: no próximo login o usuário só acessa `/conta/senha` até definir uma senha própria.
+- **Reset** derruba as sessões abertas do usuário (`users.session_version + 1`).
+- **Excluir** é DELETE real, com confirmação digitando o login. O log de login do usuário é preservado.
+- **Mudança de papel** vale no próximo request, sem relogar: o papel é relido do banco a cada request (antes ficava no cookie por até 8 dias).
+- **Travas:** o admin não exclui nem muda o próprio papel, e não reseta a própria senha pelo painel (usa `/conta/senha`). O sistema nunca fica sem admin ativo: rebaixar ou excluir o último admin é recusado.
+
+### 16.3 Minha senha (todos os usuários)
+
+`/conta/senha` (link no próprio nome, no menu) troca **somente a senha do usuário logado**. A rota não recebe id; o alvo é sempre o usuário da sessão. Exige a senha atual (na troca obrigatória, a provisória). A nova precisa ser diferente e ter de 8 caracteres a 72 bytes (limite do bcrypt). As outras sessões do usuário caem; a atual continua.
+
+### 16.4 Sessão
+
+O cookie (gorilla CookieStore, assinado e criptografado) guarda só `user_id` e `session_version`. A cada request o `RequireAuth` relê o usuário e recusa a sessão se ele foi excluído ou desativado, ou se a versão mudou. **No deploy da migration 024 todos precisam entrar de novo uma vez**, porque os cookies do formato antigo são recusados.
+
+### 16.5 Log de login (`login_events`, só admin em `/admin/logins`)
+
+Registra `login_success`, `login_failure` e `logout`, com data/hora, IP e navegador (User-Agent). Motivos de falha: `senha incorreta`, `usuário inexistente`, `usuário desativado`; a tela de login mostra sempre "credenciais inválidas". **Retenção: para sempre** (decisão do Marcus, ~5 usuários).
+
+- `user_id` **sem FK** e `username` como texto, de propósito: sobrevivem à exclusão do usuário. Login inexistente grava `user_id` NULL e o que foi digitado.
+- O IP vem do `X-Forwarded-For` do Nginx; só é aceito quando a conexão vem de `127.0.0.1`/`::1` (`router.SetTrustedProxies`), para ninguém forjar o IP mandando o cabeçalho direto.
+- Falha ao gravar o log nunca bloqueia o login (só vai para o journal).
+
+**Implementado** em `migrations/024_user_rbac_login_events.sql`, `internal/db/query/{user,login_event}.sql`, `internal/auth/` (sessão, middleware, login/logout, minha senha), `internal/user/handler.go` e templates `admin_users`, `admin_user_edit`, `admin_logins`, `account_password`.

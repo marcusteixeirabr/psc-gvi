@@ -6,8 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/marcusteixeirabr/psc-gvi/internal/db/sqlc"
 )
 
 // ErrInvalidCredentials é retornado quando usuário ou senha estão errados.
@@ -15,51 +14,46 @@ import (
 // erradas" de "erro interno" sem fazer string matching.
 var ErrInvalidCredentials = errors.New("usuário ou senha inválidos")
 
-// Authenticate valida as credenciais e retorna a sessão do usuário.
+// Motivos de falha gravados em login_events.reason. Só o admin vê no log;
+// a tela de login mostra sempre a mesma mensagem genérica, para não revelar
+// a um estranho se o login existe.
+const (
+	reasonWrongPassword = "senha incorreta"
+	reasonUnknownUser   = "usuário inexistente"
+	reasonInactiveUser  = "usuário desativado"
+)
+
+// dummyHash é um hash bcrypt qualquer (custo 10, o mesmo do seed 005).
+// Quando o usuário não existe, comparamos a senha com ele mesmo assim, para a
+// resposta demorar o mesmo tempo (~100ms) nos dois casos. Sem isso, um
+// atacante descobriria quais logins existem só medindo o tempo de resposta.
+const dummyHash = "$2a$10$Rdw7FdqlZ3hlqwFsTkyde.c8AnrrWC633oUWcVbGPPHXZzo.3yiFq"
+
+// Authenticate valida as credenciais.
+//
+// Sucesso: devolve o usuário. Falha de credencial: ErrInvalidCredentials e o
+// motivo (para o log de login). Qualquer outro erro é falha do banco.
 //
 // Por que buscamos pelo username e depois comparamos a senha em Go?
 // O bcrypt não pode ser comparado com SQL — o hash precisa ser
 // processado pela função bcrypt.CompareHashAndPassword em Go.
-// Buscar pelo username e comparar em Go é a abordagem correta.
-func Authenticate(ctx context.Context, pool *pgxpool.Pool, username, password string) (*UserSession, error) {
-	var user struct {
-		id           int64
-		username     string
-		displayName  string
-		passwordHash string
-		role         string
-	}
-
-	// $1 é o placeholder do pgx para evitar SQL injection.
-	// Nunca concatene strings em queries SQL — use placeholders.
-	err := pool.QueryRow(ctx,
-		`SELECT id, username, display_name, password_hash, role
-		 FROM users
-		 WHERE username = $1 AND active = true`,
-		username,
-	).Scan(&user.id, &user.username, &user.displayName, &user.passwordHash, &user.role)
-
+func Authenticate(ctx context.Context, q *sqlc.Queries, username, password string) (*sqlc.User, string, error) {
+	u, err := q.GetUserByUsername(ctx, username)
 	if err != nil {
-		// pgx.ErrNoRows significa "nenhuma linha encontrada" — usuário não existe.
-		// Retornamos ErrInvalidCredentials (não "usuário não encontrado") para não
-		// revelar ao atacante se o usuário existe ou não.
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrInvalidCredentials
+			checkPassword(dummyHash, password) // só para igualar o tempo
+			return nil, reasonUnknownUser, ErrInvalidCredentials
 		}
-		return nil, fmt.Errorf("erro ao consultar usuário: %w", err)
+		return nil, "", fmt.Errorf("erro ao consultar usuário: %w", err)
 	}
 
-	// bcrypt.CompareHashAndPassword compara a senha fornecida com o hash armazenado.
-	// Retorna nil se a senha for correta, erro caso contrário.
-	// Esta operação é intencionalmente lenta (~100ms) para dificultar ataques de força bruta.
-	if err := bcrypt.CompareHashAndPassword([]byte(user.passwordHash), []byte(password)); err != nil {
-		return nil, ErrInvalidCredentials
+	if !checkPassword(u.PasswordHash, password) {
+		return nil, reasonWrongPassword, ErrInvalidCredentials
 	}
-
-	return &UserSession{
-		ID:          user.id,
-		Username:    user.username,
-		DisplayName: user.displayName,
-		Role:        user.role,
-	}, nil
+	// Senha certa, mas conta desativada. Checado DEPOIS da senha para não
+	// revelar a um estranho que a conta existe e está desativada.
+	if !u.Active {
+		return nil, reasonInactiveUser, ErrInvalidCredentials
+	}
+	return &u, "", nil
 }

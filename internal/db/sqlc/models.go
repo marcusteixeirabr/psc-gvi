@@ -18,6 +18,17 @@ type Inspection struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type LoginEvent struct {
+	ID         int64              `json:"id"`
+	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
+	Event      string             `json:"event"`
+	UserID     *int64             `json:"user_id"`
+	Username   string             `json:"username"`
+	Ip         string             `json:"ip"`
+	UserAgent  string             `json:"user_agent"`
+	Reason     string             `json:"reason"`
+}
+
 type PortCall struct {
 	ID                     int64              `json:"id"`
 	VesselID               int64              `json:"vessel_id"`
@@ -55,13 +66,15 @@ type ScraperRun struct {
 }
 
 type User struct {
-	ID           int64              `json:"id"`
-	Username     string             `json:"username"`
-	DisplayName  string             `json:"display_name"`
-	PasswordHash string             `json:"password_hash"`
-	Role         string             `json:"role"`
-	Active       bool               `json:"active"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ID                 int64              `json:"id"`
+	Username           string             `json:"username"`
+	DisplayName        string             `json:"display_name"`
+	PasswordHash       string             `json:"password_hash"`
+	Role               string             `json:"role"`
+	Active             bool               `json:"active"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	MustChangePassword bool               `json:"must_change_password"`
+	SessionVersion     int32              `json:"session_version"`
 }
 
 type Vessel struct {

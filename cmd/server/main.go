@@ -95,8 +95,17 @@ func main() {
 
 	router.LoadHTMLGlob("web/templates/*.html")
 
+	// IP real do cliente para o log de login. Em produção o Gin fica atrás do
+	// Nginx (mesma máquina), que manda o IP original em X-Forwarded-For.
+	// Só confiamos nesse cabeçalho quando a conexão vem do próprio host; sem
+	// isso, qualquer um forjaria o IP do log mandando o cabeçalho na mão.
+	if err := router.SetTrustedProxies([]string{"127.0.0.1", "::1"}); err != nil {
+		slog.Error("erro ao configurar proxies confiáveis", "error", err)
+		os.Exit(1)
+	}
+
 	// ── Rotas públicas ─────────────────────────────────────────────────────
-	authHandler := auth.NewHandler(pool)
+	authHandler := auth.NewHandler(queries)
 
 	router.GET("/login", authHandler.ShowLogin)
 	router.POST("/login", authHandler.HandleLogin)
@@ -118,13 +127,18 @@ func main() {
 	if alerter != nil {
 		healthHandler = healthHandler.WithMailer(alerter)
 	}
-	userHandler := user.NewHandler(pool)
+	userHandler := user.NewHandler(queries)
 
 	// ── Rotas protegidas ───────────────────────────────────────────────────
 	protected := router.Group("/")
-	protected.Use(auth.RequireAuth)
+	protected.Use(authHandler.RequireAuth)
 	{
 		protected.GET("/", dashboardHandler.Index)
+
+		// Minha senha — cada usuário troca SÓ a própria (sem :id na rota).
+		// Única página liberada enquanto a senha for provisória.
+		protected.GET(auth.PathChangePassword, authHandler.ShowChangePassword)
+		protected.POST(auth.PathChangePassword, authHandler.ChangePassword)
 
 		// Relatório mensal — leitura (todos os usuários autenticados)
 		protected.GET("/relatorio", reportHandler.Show)
@@ -177,7 +191,15 @@ func main() {
 			admins.POST("/vessels/:id/merge", vesselHandler.MergeVessel)
 			admins.GET("/admin/health", healthHandler.Show)
 			admins.POST("/admin/health/test-email", healthHandler.TestEmail)
+			// Área administrativa de usuários (RBAC) + log de login
 			admins.GET("/admin/users", userHandler.List)
+			admins.POST("/admin/users", userHandler.Create)
+			admins.GET("/admin/users/:id", userHandler.EditForm)
+			admins.POST("/admin/users/:id/name", userHandler.UpdateName)
+			admins.POST("/admin/users/:id/role", userHandler.UpdateRole)
+			admins.POST("/admin/users/:id/password", userHandler.ResetPassword)
+			admins.POST("/admin/users/:id/delete", userHandler.Delete)
+			admins.GET("/admin/logins", userHandler.Logins)
 		}
 	}
 

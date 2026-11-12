@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log de login — PSC GVI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f7fafc; }
+    .container { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.4rem; color: #1a202c; margin-bottom: 0.25rem; }
+    .sub { font-size: 0.82rem; color: #718096; margin-bottom: 1.25rem; }
+    .back { display: inline-block; margin-bottom: 1.25rem; font-size: 0.82rem; color: #4a5568; text-decoration: none; }
+    .back:hover { color: #2d3748; }
+
+    .filters { display: flex; gap: 0.6rem; align-items: end; margin-bottom: 1rem; }
+    label { display: block; font-size: 0.72rem; font-weight: 600; color: #4a5568; margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    select { padding: 0.4rem 0.6rem; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 0.85rem; min-width: 170px; }
+    button { padding: 0.45rem 0.9rem; background: #2b6cb0; color: white; border: none; border-radius: 5px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+    a.clear { font-size: 0.82rem; color: #4a5568; padding-bottom: 0.45rem; }
+
+    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); overflow: hidden; font-size: 0.82rem; }
+    th { background: #edf2f7; text-align: left; padding: 0.5rem 0.8rem; font-size: 0.7rem; color: #4a5568; text-transform: uppercase; letter-spacing: 0.05em; }
+    td { padding: 0.5rem 0.8rem; border-bottom: 1px solid #edf2f7; color: #2d3748; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    td.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    td.ua { color: #718096; font-size: 0.75rem; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .ev { display: inline-block; font-size: 0.7rem; padding: 0.12rem 0.5rem; border-radius: 10px; font-weight: 700; }
+    .ev-login_success { background: #c6f6d5; color: #276749; }
+    .ev-login_failure { background: #fed7d7; color: #c53030; }
+    .ev-logout        { background: #edf2f7; color: #4a5568; }
+    .gone { color: #a0aec0; font-size: 0.72rem; }
+    .reason { color: #c53030; font-size: 0.75rem; }
+
+    .pag { display: flex; justify-content: space-between; margin-top: 1rem; font-size: 0.82rem; color: #4a5568; }
+    .pag a { color: #2b6cb0; text-decoration: none; }
+    .pag span { color: #a0aec0; }
+    .pag span.info { color: #4a5568; }
+    .empty { background: white; border-radius: 8px; padding: 2rem; text-align: center; color: #718096; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  {{template "nav" .}}
+  <div class="container">
+    <a href="/admin/users" class="back">← Usuários</a>
+    <h1>Log de login</h1>
+    <p class="sub">Logins, tentativas falhas e logouts, do mais recente para o mais antigo. Horário de Brasília. Guardado sem prazo de expiração.</p>
+
+    <form method="GET" action="/admin/logins" class="filters">
+      <div>
+        <label for="username">Usuário</label>
+        <select id="username" name="username">
+          <option value="">Todos</option>
+          {{range .Usernames}}<option value="{{.}}" {{if eq . $.FUsername}}selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </div>
+      <div>
+        <label for="event">Evento</label>
+        <select id="event" name="event">
+          <option value="">Todos</option>
+          <option value="login_success" {{if eq .FEvent "login_success"}}selected{{end}}>Login</option>
+          <option value="login_failure" {{if eq .FEvent "login_failure"}}selected{{end}}>Falha</option>
+          <option value="logout" {{if eq .FEvent "logout"}}selected{{end}}>Logout</option>
+        </select>
+      </div>
+      <button type="submit">Filtrar</button>
+      {{if or .FUsername .FEvent}}<a class="clear" href="/admin/logins">limpar</a>{{end}}
+    </form>
+
+    {{if .Events}}
+    <table>
+      <thead>
+        <tr>
+          <th>Data/hora</th>
+          <th>Evento</th>
+          <th>Usuário</th>
+          <th>IP</th>
+          <th>Navegador</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Events}}
+        <tr>
+          <td class="when">{{.When}}</td>
+          <td>
+            <span class="ev ev-{{.Event}}">{{.EventLabel}}</span>
+            {{if .Reason}}<div class="reason">{{.Reason}}</div>{{end}}
+          </td>
+          <td><strong>{{.Username}}</strong>{{if .Deleted}} <span class="gone">(excluído/inexistente)</span>{{end}}</td>
+          <td>{{.IP}}</td>
+          <td class="ua" title="{{.UserAgent}}">{{.UserAgent}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+
+    {{if gt .Page.TotalPages 1}}
+    <div class="pag">
+      {{if .Page.HasPrev}}<a href="{{.Page.PrevURL}}">← Mais recentes</a>{{else}}<span>← Mais recentes</span>{{end}}
+      <span class="info">Página {{.Page.Current}} de {{.Page.TotalPages}} · {{.Page.TotalItems}} eventos</span>
+      {{if .Page.HasNext}}<a href="{{.Page.NextURL}}">Mais antigos →</a>{{else}}<span>Mais antigos →</span>{{end}}
+    </div>
+    {{end}}
+    {{else}}
+    <div class="empty">Nenhum evento registrado{{if or .FUsername .FEvent}} com esse filtro{{end}}.</div>
+    {{end}}
+  </div>
+</body>
+</html>

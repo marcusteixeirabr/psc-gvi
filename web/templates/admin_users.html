@@ -7,8 +7,9 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, sans-serif; background: #f7fafc; }
-    .container { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
+    .container { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
     h1 { font-size: 1.4rem; color: #1a202c; margin-bottom: 0.25rem; }
+    h2 { font-size: 1rem; color: #2d3748; margin-bottom: 0.75rem; }
     .sub { font-size: 0.82rem; color: #718096; margin-bottom: 1.5rem; }
 
     .flash { background: #c6f6d5; color: #276749; border-radius: 6px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
@@ -24,13 +25,24 @@
     .badge-admin  { background: #ebf4ff; color: #2b6cb0; }
     .badge-editor { background: #fef3c7; color: #92400e; }
     .badge-reader { background: #f0fff4; color: #276749; }
-    .badge-off    { background: #edf2f7; color: #718096; }
+    .badge-warn   { background: #fefcbf; color: #975a16; text-transform: none; }
 
     .status-on  { color: #38a169; font-weight: 600; }
     .status-off { color: #a0aec0; }
 
     .back { display: inline-block; margin-bottom: 1.25rem; font-size: 0.82rem; color: #4a5568; text-decoration: none; }
     .back:hover { color: #2d3748; }
+    a.edit { color: #2b6cb0; text-decoration: none; font-size: 0.82rem; }
+    a.edit:hover { text-decoration: underline; }
+    .you { color: #718096; font-size: 0.75rem; }
+
+    .card { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 1.1rem 1.25rem; margin-top: 1.75rem; }
+    .form-row { display: grid; grid-template-columns: 1fr 1.4fr 0.9fr 1.1fr auto; gap: 0.6rem; align-items: end; }
+    label { display: block; font-size: 0.72rem; font-weight: 600; color: #4a5568; margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    input, select { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid #cbd5e0; border-radius: 5px; font-size: 0.85rem; }
+    button { padding: 0.5rem 0.9rem; background: #2b6cb0; color: white; border: none; border-radius: 5px; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+    button:hover { background: #2c5282; }
+    .hint { font-size: 0.75rem; color: #718096; margin-top: 0.6rem; }
   </style>
 </head>
 <body>
@@ -38,7 +50,7 @@
   <div class="container">
     <a href="/admin/health" class="back">← Saúde do sistema</a>
     <h1>Usuários</h1>
-    <p class="sub">Contas registradas no sistema</p>
+    <p class="sub">Contas do sistema. Só administradores acessam esta área. · <a class="edit" href="/admin/logins">Ver log de login →</a></p>
 
     {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
     {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
@@ -52,13 +64,14 @@
           <th>Papel</th>
           <th>Status</th>
           <th>Criado em</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
         {{range .Users}}
         <tr>
           <td>{{.ID}}</td>
-          <td><strong>{{.Username}}</strong></td>
+          <td><strong>{{.Username}}</strong>{{if .IsSelf}} <span class="you">(você)</span>{{end}}</td>
           <td>{{.DisplayName}}</td>
           <td>
             {{if eq .Role "admin"}}
@@ -75,12 +88,42 @@
             {{else}}
               <span class="status-off">Inativo</span>
             {{end}}
+            {{if .MustChangePassword}}<span class="badge badge-warn" title="Senha provisória: troca obrigatória no próximo login">senha provisória</span>{{end}}
           </td>
           <td>{{.CreatedAt}}</td>
+          <td><a class="edit" href="/admin/users/{{.ID}}">✏ Editar</a></td>
         </tr>
         {{end}}
       </tbody>
     </table>
+
+    <div class="card">
+      <h2>Novo usuário</h2>
+      <form method="POST" action="/admin/users" autocomplete="off">
+        <div class="form-row">
+          <div>
+            <label for="username">Login</label>
+            <input id="username" name="username" required pattern="[a-z0-9._\-]{3,50}" placeholder="ex.: joao.silva" autocomplete="off">
+          </div>
+          <div>
+            <label for="display_name">Nome exibido</label>
+            <input id="display_name" name="display_name" required maxlength="100" placeholder="ex.: 1T João Silva">
+          </div>
+          <div>
+            <label for="role">Papel</label>
+            <select id="role" name="role">
+              {{range .Roles}}<option value="{{.Value}}" {{if eq .Value "reader"}}selected{{end}}>{{.Label}}</option>{{end}}
+            </select>
+          </div>
+          <div>
+            <label for="password">Senha provisória</label>
+            <input id="password" name="password" type="password" required minlength="{{.MinPassLen}}" autocomplete="new-password">
+          </div>
+          <div><button type="submit">Criar</button></div>
+        </div>
+        <p class="hint">Mínimo de {{.MinPassLen}} caracteres. Passe a senha provisória ao usuário: no primeiro login ele é obrigado a trocá-la.</p>
+      </form>
+    </div>
   </div>
 </body>
 </html>
